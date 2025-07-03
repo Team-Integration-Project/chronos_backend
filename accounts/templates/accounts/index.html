@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reconhecimento Facial - Teste</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+        }
+        #video {
+            width: 100%;
+            max-width: 600px;
+            border: 2px solid #333;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        #canvas {
+            display: none;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #result {
+            width: 100%;
+            max-width: 600px;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        @media (max-width: 600px) {
+            #video, #result {
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h2>Teste de Reconhecimento Facial</h2>
+    <video id="video" autoplay playsinline></video>
+    <button onclick="captureAndSend()">Capturar e Verificar</button>
+    <div id="result"></div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const video = document.getElementById('video');
+        const resultDiv = document.getElementById('result');
+        const canvas = document.getElementById('canvas');
+        const context = canvas.getContext('2d');
+
+        // Acessar a câmera
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => {
+                    video.srcObject = stream;
+                })
+                .catch(err => {
+                    resultDiv.innerHTML = `Erro ao acessar a câmera: ${err.message}`;
+                });
+        } else {
+            resultDiv.innerHTML = 'Câmera não suportada pelo navegador.';
+        }
+
+        function captureAndSend() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(blob => {
+                const formData = new FormData();
+                formData.append('face_image', blob, 'face.jpg');
+
+                fetch('http://127.0.0.1:8001/api/mark-attendance/', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.username) {
+                        resultDiv.innerHTML = `
+                            Reconhecimento bem-sucedido!<br>
+                            Username: ${data.username}<br>
+                            Email: ${data.email}<br>
+                            Data: ${data.entry_date}<br>
+                            Hora: ${data.entry_time}
+                        `;
+                    } else {
+                        resultDiv.innerHTML = `Erro: ${data.error || 'Reconhecimento falhou'}`;
+                    }
+                })
+                .catch(error => {
+                    resultDiv.innerHTML = `Erro na requisição: ${error.message}`;
+                });
+            }, 'image/jpeg');
+        }
+    </script>
+</body>
+</html>
