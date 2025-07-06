@@ -10,7 +10,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['username', 'email', 'password', 'face_image']
+        fields = ['id', 'username', 'email', 'password', 'face_image']
 
     def create(self, validated_data):
         face_image = validated_data.pop('face_image')

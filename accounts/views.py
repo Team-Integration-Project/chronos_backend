@@ -5,7 +5,8 @@ from rest_framework import status
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import RegisterSerializer, LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer
-from .models import CustomUser, PasswordResetToken
+from .models import CustomUser, PasswordResetToken, UserRole
+from .permission import AdminPermission
 import face_recognition
 import numpy as np
 import logging
@@ -13,15 +14,22 @@ import uuid
 from django.core.mail import send_mail
 from django.utils import timezone
 from django.conf import settings
+from django.core.exceptions import ObjectDoesNotExist
 
 logger = logging.getLogger(__name__)
 
 class RegisterView(APIView):
+    permission_classes = [AdminPermission]
+
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
             try:
+                role_param = request.data.get('role', request.query_params.get('role', 'user')).lower()
+                role = UserRole.ADMIN.value if role_param == 'admin' else UserRole.USER.value
                 user = serializer.save()
+                user.role = role
+                user.save()
                 refresh = RefreshToken.for_user(user)
                 return Response({
                     'refresh': str(refresh),
@@ -149,7 +157,6 @@ class ForgotPasswordView(APIView):
                 logger.warning(f"Tentativa de redefinição para email inexistente: {email}")
                 return Response({'message': 'Se o email existir, um link será enviado.'}, status=status.HTTP_200_OK)
 
-            # Gerar token único
             token = str(uuid.uuid4())
             PasswordResetToken.objects.update_or_create(
                 user=user,
@@ -174,7 +181,7 @@ class ResetPasswordView(APIView):
         serializer = ResetPasswordSerializer(data=request.data)
         if serializer.is_valid():
             token_obj = PasswordResetToken.objects.filter(token=token, is_used=False).first()
-            if not token_obj or (timezone.now() - token_obj.created_at).total_seconds() > 3600:  # Expira em 1 hora
+            if not token_obj or (timezone.now() - token_obj.created_at).total_seconds() > 3600:  
                 logger.error(f"Token inválido ou expirado: {token}")
                 return Response({'error': 'Token inválido ou expirado'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -187,3 +194,42 @@ class ResetPasswordView(APIView):
             logger.info(f"Senha redefinida para {user.email}")
             return Response({'message': 'Senha redefinida com sucesso'}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+class UserManagementView(APIView):
+    permission_classes = [AdminPermission]
+
+    def put(self, request, user_id):
+        try:
+            User = get_user_model()
+            user = User.objects.get(id=user_id)
+            serializer = RegisterSerializer(user, data=request.data, partial=True)
+            if serializer.is_valid():
+                if 'role' in request.data and request.data['role'] == 'admin' and not request.user.is_admin:
+                    return Response({'error': 'Apenas admins podem promover a admin'}, status=status.HTTP_403_FORBIDDEN)
+                serializer.save()
+                logger.info(f"Usuário {user.email} editado por {request.user.email}")
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except ObjectDoesNotExist:
+            logger.error(f"Usuário com ID {user_id} não encontrado")
+            return Response({'error': 'Usuário não encontrado'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Erro ao editar usuário {user_id}: {str(e)}")
+            return Response({'error': 'Erro interno'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def delete(self, request, user_id):
+        try:
+            User = get_user_model()
+            user = User.objects.get(id=user_id)
+            if user.id == request.user.id:
+                return Response({'error': 'Não é possível excluir a si mesmo'}, status=status.HTTP_403_FORBIDDEN)
+            user_email = user.email
+            user.delete()
+            logger.info(f"Usuário {user_email} excluído por {request.user.email}")
+            return Response({'message': 'Usuário excluído com sucesso'}, status=status.HTTP_200_OK)
+        except ObjectDoesNotExist:
+            logger.error(f"Usuário com ID {user_id} não encontrado")
+            return Response({'error': 'Usuário não encontrado'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Erro ao excluir usuário {user_id}: {str(e)}")
+            return Response({'error': 'Erro interno'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
