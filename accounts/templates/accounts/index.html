@@ -3,68 +3,116 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reconhecimento Facial - Teste</title>
+    <title>Teste de Câmera - Marca Ponto</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
-            background-color: #f0f0f0;
+            background-color: #f4f4f4;
             margin: 0;
             padding: 20px;
         }
         #video {
-            width: 100%;
-            max-width: 600px;
             border: 2px solid #333;
-            border-radius: 8px;
-            margin-bottom: 20px;
+            width: 640px;
+            height: 480px;
+            background-color: #000;
         }
         #canvas {
             display: none;
         }
-        button {
-            padding: 10px 20px;
+        .controls {
+            margin: 20px 0;
+        }
+        select, button {
+            padding: 10px;
+            margin: 5px;
             font-size: 16px;
+        }
+        button {
             background-color: #4CAF50;
             color: white;
             border: none;
-            border-radius: 5px;
             cursor: pointer;
-            margin-bottom: 20px;
         }
         button:hover {
             background-color: #45a049;
         }
-        #result {
-            width: 100%;
-            max-width: 600px;
-            padding: 15px;
-            background-color: #fff;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-            text-align: center;
+        #message {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
         }
-        @media (max-width: 600px) {
-            #video, #result {
-                max-width: 100%;
-            }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #fff;
+            max-width: 600px;
+            display: none;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
         }
     </style>
 </head>
 <body>
-    <h2>Teste de Reconhecimento Facial</h2>
-    <video id="video" autoplay playsinline></video>
-    <button onclick="captureAndSend()">Capturar e Verificar</button>
-    <div id="result"></div>
-    <canvas id="canvas"></canvas>
+    <h1>Teste de Câmera - Marca Ponto</h1>
+    <video id="video" autoplay></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <div class="controls">
+        <select id="pointType">
+            <option value="entrada">Entrada</option>
+            <option value="almoco">Almoço</option>
+            <option value="saida">Saída</option>
+        </select>
+        <button onclick="captureAndSend()">Capturar e Enviar</button>
+    </div>
+    <div id="message"></div>
+    <div id="result">
+        <h3>Informações do Último Ponto</h3>
+        <p><strong>Nome Completo:</strong> <span id="fullName"></span></p>
+        <p><strong>Data:</strong> <span id="resultDate"></span></p>
+        <h4>Últimos Registros:</h4>
+        <table id="lastRecordsTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Tipo</th>
+                    <th>Data/Hora</th>
+                    <th>Foto</th>
+                    <th>Sincronizado</th>
+                </tr>
+            </thead>
+            <tbody id="lastRecordsBody"></tbody>
+        </table>
+    </div>
 
     <script>
         const video = document.getElementById('video');
-        const resultDiv = document.getElementById('result');
         const canvas = document.getElementById('canvas');
         const context = canvas.getContext('2d');
+        const messageDiv = document.getElementById('message');
+        const resultDiv = document.getElementById('result');
+        const fullNameSpan = document.getElementById('fullName');
+        const resultDateSpan = document.getElementById('resultDate');
+        const lastRecordsBody = document.getElementById('lastRecordsBody');
+        const pointTypeSelect = document.getElementById('pointType');
 
         // Acessar a câmera
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -73,19 +121,19 @@
                     video.srcObject = stream;
                 })
                 .catch(err => {
-                    resultDiv.innerHTML = `Erro ao acessar a câmera: ${err.message}`;
+                    showMessage(`Erro ao acessar a câmera: ${err.message}`, 'error');
                 });
         } else {
-            resultDiv.innerHTML = 'Câmera não suportada pelo navegador.';
+            showMessage('Seu navegador não suporta acesso à câmera.', 'error');
         }
 
+        // Capturar e enviar imagem
         function captureAndSend() {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
             context.drawImage(video, 0, 0, canvas.width, canvas.height);
             canvas.toBlob(blob => {
                 const formData = new FormData();
-                formData.append('face_image', blob, 'face.jpg');
+                formData.append('face_image', blob, 'captured_image.jpg');
+                formData.append('point_type', pointTypeSelect.value);
 
                 fetch('http://127.0.0.1:8001/api/mark-attendance/', {
                     method: 'POST',
@@ -93,22 +141,48 @@
                 })
                 .then(response => response.json())
                 .then(data => {
-                    if (data.username) {
-                        resultDiv.innerHTML = `
-                            Reconhecimento bem-sucedido!<br>
-                            Username: ${data.username}<br>
-                            Email: ${data.email}<br>
-                            Data: ${data.entry_date}<br>
-                            Hora: ${data.entry_time}
-                        `;
+                    if (data.error) {
+                        showMessage(data.error, 'error');
                     } else {
-                        resultDiv.innerHTML = `Erro: ${data.error || 'Reconhecimento falhou'}`;
+                        showMessage(`Ponto ${pointTypeSelect.value} marcado com sucesso!`, 'success');
+                        displayResult(data);
                     }
                 })
                 .catch(error => {
-                    resultDiv.innerHTML = `Erro na requisição: ${error.message}`;
+                    showMessage(`Erro ao enviar: ${error.message}`, 'error');
                 });
             }, 'image/jpeg');
+        }
+
+        // Exibir informações do resultado
+        function displayResult(data) {
+            resultDiv.style.display = 'block';
+            fullNameSpan.textContent = data.full_name;
+            resultDateSpan.textContent = data.date;
+
+            // Limpar tabela anterior
+            lastRecordsBody.innerHTML = '';
+            data.last_records.forEach(record => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${record.id}</td>
+                    <td>${record.point_type}</td>
+                    <td>${record.data_hora}</td>
+                    <td>${record.foto_path || 'N/A'}</td>
+                    <td>${record.is_synced ? 'Sim' : 'Não'}</td>
+                `;
+                lastRecordsBody.appendChild(row);
+            });
+        }
+
+        // Exibir mensagem
+        function showMessage(text, type) {
+            messageDiv.textContent = text;
+            messageDiv.className = type;
+            setTimeout(() => {
+                messageDiv.textContent = '';
+                messageDiv.className = '';
+            }, 5000); // Limpa após 5 segundos
         }
     </script>
 </body>

@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from pgvector.django import VectorField
 from enum import Enum
+from django.utils import timezone
 
 class UserRole(Enum):
     USER = "user"
@@ -9,22 +10,44 @@ class UserRole(Enum):
 
 class CustomUser(AbstractUser):
     email = models.EmailField(unique=True)
-    facial_embedding = VectorField(dimensions=128,null=True, blank=True)
+    facial_embedding = VectorField(dimensions=128, null=True, blank=True)
     role = models.CharField(max_length=10, choices=[(role.value, role.value) for role in UserRole], default=UserRole.USER.value)
 
     def __str__(self):
         return self.username
 
     @property
-    def is_Admin(self):
+    def is_admin(self):
         return self.role == UserRole.ADMIN.value
-    
 
 class PasswordResetToken(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
     token = models.CharField(max_length=255, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    is_used = models.BooleanField(default=True)
+    is_used = models.BooleanField(default=False)
 
     def __str__(self):
         return f"Token for {self.user.email}"
+
+class Attendance(models.Model):
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
+    point_type = models.CharField(max_length=20, choices=[
+        ('entrada', 'Entrada'),
+        ('almoco', 'Almoço'),
+        ('saida', 'Saída')
+    ])
+    data_hora = models.DateTimeField(auto_now_add=True)
+    foto_path = models.ImageField(upload_to='attendance/photos/', null=True, blank=True)
+    is_synced = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.point_type} em {self.data_hora}"
+
+class Justification(models.Model):
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, null=True, blank=True)
+    date = models.DateField(default=timezone.now)
+    reason = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user.username if self.user else 'Desconhecido'} - Justificativa em {self.date}"

@@ -4,23 +4,24 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
-from .serializers import RegisterSerializer, LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer
-from .models import CustomUser, PasswordResetToken, UserRole
+from .serializers import RegisterSerializer, LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer, AttendanceSerializer, JustificationSerializer
+from .models import CustomUser, PasswordResetToken, UserRole, Attendance, Justification
 from .permission import AdminPermission
 import face_recognition
 import numpy as np
 import logging
 import uuid
+import os
 from django.core.mail import send_mail
 from django.utils import timezone
 from django.conf import settings
+from django.core.files.storage import default_storage
 from django.core.exceptions import ObjectDoesNotExist
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
 class RegisterView(APIView):
-    permission_classes = [AdminPermission]
-
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
@@ -99,21 +100,50 @@ class LoginView(APIView):
                 return Response({'error': 'Nenhum embedding facial registrado'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+class CameraTestView(APIView):
+    def get(self, request):
+        return render(request, 'accounts/index.html')
+
 class MarkAttendanceView(APIView):
     def post(self, request):
-        face_image = request.data.get('face_image')
-        if not face_image:
-            return Response({'error': 'Imagem facial é obrigatória'}, status=status.HTTP_400_BAD_REQUEST)
+        logger.info(f"Requisição recebida: {request.FILES}, {request.data}, Content-Type: {request.headers.get('Content-Type')}")
+        face_image = request.FILES.get('face_image')
+        if not face_image or not hasattr(face_image, 'name'):
+            logger.error(f"face_image inválido em request.FILES: {request.FILES}")
+            return Response({'error': 'Imagem facial inválida ou ausente. Certifique-se do tipo de codificação no formulário.'}, status=status.HTTP_400_BAD_REQUEST)
+        point_type = request.data.get('point_type', 'entrada')
+
+        # Verificar tipo de arquivo
+        allowed_extensions = {'.jpg', '.jpeg', '.png'}
+        file_extension = os.path.splitext(face_image.name.lower())[1]
+        if file_extension not in allowed_extensions:
+            logger.error(f"Extensão de arquivo não suportada: {face_image.name}")
+            return Response({'error': 'Formato de imagem não suportado. Use .jpg, .jpeg ou .png'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            image = face_recognition.load_image_file(face_image)
+            # Validar com PIL e verificar se é uma imagem JPEG/PNG
+            img = Image.open(face_image)
+            img.verify()
+            img.close()
+            # Forçar leitura como JPEG para evitar problemas com .jpg
+            image = face_recognition.load_image_file(face_image, mode='RGB')
+            logger.info(f"Processando imagem: {face_image.name}, tamanho: {face_image.size} bytes")
             encodings = face_recognition.face_encodings(image)
+            logger.info(f"Número de faces detectadas: {len(encodings)}")
             if not encodings:
+                justification_data = {
+                    'user': None,
+                    'reason': 'Nenhum rosto detectado na imagem',
+                    'date': timezone.now().date()
+                }
+                justification_serializer = JustificationSerializer(data=justification_data)
+                if justification_serializer.is_valid():
+                    justification_serializer.save()
                 return Response({'error': 'Nenhum rosto detectado na imagem'}, status=status.HTTP_400_BAD_REQUEST)
             login_embedding = encodings[0]
         except Exception as e:
             logger.error(f"Erro ao processar imagem facial: {str(e)}")
-            return Response({'error': 'Erro ao processar imagem facial'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': f'Erro ao processar imagem facial: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
 
         User = get_user_model()
         user = None
@@ -124,26 +154,71 @@ class MarkAttendanceView(APIView):
             if u.facial_embedding is not None:
                 db_embedding = np.array(u.facial_embedding)
                 distance = face_recognition.face_distance([db_embedding], login_embedding)[0]
+                logger.info(f"Comparando com usuário {u.username}, distância: {distance}")
                 if distance < min_distance:
                     min_distance = distance
                     matched_user = u
 
+        logger.info(f"Mínima distância encontrada: {min_distance}, usuário correspondente: {matched_user.username if matched_user else 'Nenhum'}")
         if matched_user and min_distance < 0.4:
-            attendance_data = {
-                'username': matched_user.username,
-                'email': matched_user.email,
-                'entry_date': timezone.now().date().isoformat(),
-                'entry_time': timezone.now().time().isoformat(),
-            }
-            logger.info(f"Registro de ponto bem-sucedido para {matched_user.username} - Data: {attendance_data['entry_date']} Hora: {attendance_data['entry_time']}")
-            return Response(attendance_data, status=status.HTTP_200_OK)
-        else:
-            logger.error(f"Rosto não corresponde ou nenhum usuário encontrado. Distância: {min_distance}")
-            return Response({'error': 'Rosto não corresponde ou nenhum usuário encontrado'}, status=status.HTTP_401_UNAUTHORIZED)
+            valid_types = ['entrada', 'almoco', 'saida']
+            if point_type not in valid_types:
+                return Response({'error': 'Tipo de ponto inválido'}, status=status.HTTP_400_BAD_REQUEST)
 
-class CameraTestView(APIView):
-    def get(self, request):
-        return render(request, 'accounts/index.html')
+            current_date = timezone.now().date()
+            logger.info(f"Data atual considerada: {current_date}")
+            # Verificar todos os registros anteriores do usuário, não apenas do dia atual
+            all_attendances = Attendance.objects.filter(user=matched_user).order_by('data_hora')
+            registered_types = [a.point_type for a in all_attendances]
+            logger.info(f"Todos os tipos de ponto registrados para {matched_user.username}: {registered_types}")
+            # Verificar sequência com base nos registros anteriores
+            next_index = valid_types.index(point_type) if point_type in valid_types else -1
+            if next_index > 0 and valid_types[next_index - 1] not in registered_types:
+                return Response({'error': f'Primeiro marque {valid_types[next_index - 1]}'}, status=status.HTTP_400_BAD_REQUEST)
+            # Verificar duplicatas apenas no dia atual
+            if Attendance.objects.filter(user=matched_user, point_type=point_type, data_hora__date=current_date).exists():
+                return Response({'error': 'Tipo de ponto já registrado hoje'}, status=status.HTTP_400_BAD_REQUEST)
+
+            file_path = f"attendance/photos/{timezone.now().strftime('%Y%m%d_%H%M%S')}_{face_image.name}"
+            try:
+                default_storage.save(file_path, face_image)
+                logger.info(f"Arquivo salvo em: {file_path}")
+                full_path = default_storage.url(file_path)
+            except Exception as e:
+                logger.error(f"Erro ao salvar arquivo: {str(e)}")
+                return Response({'error': 'Erro ao salvar imagem'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            attendance_data = {
+                'user': matched_user.id,
+                'point_type': point_type,
+                'foto_path': full_path,
+                'data_hora': timezone.now(),
+                'is_synced': False,
+            }
+            serializer = AttendanceSerializer(data=attendance_data)
+            if serializer.is_valid():
+                serializer.save()
+                logger.info(f"Registro de ponto bem-sucedido para {matched_user.username} - Tipo: {point_type}")
+                last_records = Attendance.objects.filter(user=matched_user).order_by('-data_hora')[:3]
+                response_data = {
+                    'full_name': f"{matched_user.first_name or ''} {matched_user.last_name or ''}".strip() or matched_user.username,
+                    'date': attendance_data['data_hora'].date().isoformat(),
+                    'last_records': AttendanceSerializer(last_records, many=True).data
+                }
+                logger.info(f"Resposta enviada: {response_data}")
+                return Response(response_data, status=status.HTTP_200_OK)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            justification_data = {
+                'user': matched_user.id if matched_user else None,
+                'reason': f"Falha no reconhecimento. Distância: {min_distance}",
+                'date': timezone.now().date()
+            }
+            justification_serializer = JustificationSerializer(data=justification_data)
+            if justification_serializer.is_valid():
+                justification_serializer.save()
+            logger.error(f"Falha no reconhecimento para usuário. Distância: {min_distance}")
+            return Response({'error': 'Rosto não corresponde ou nenhum usuário encontrado'}, status=status.HTTP_401_UNAUTHORIZED)
 
 class ForgotPasswordView(APIView):
     def post(self, request):
@@ -163,7 +238,7 @@ class ForgotPasswordView(APIView):
                 defaults={'token': token, 'is_used': False, 'created_at': timezone.now()}
             )
 
-            reset_link = f"http://127.0.0.1:8000/api/reset-password/{token}/" 
+            reset_link = f"http://127.0.0.1:8000/api/reset-password/{token}/"
             subject = 'Redefinição de Senha'
             message = f"Olá {user.username},\n\nClique no link para redefinir sua senha: {reset_link}\n\nEste link expira em 1 hora."
             from_email = settings.DEFAULT_FROM_EMAIL
@@ -181,7 +256,7 @@ class ResetPasswordView(APIView):
         serializer = ResetPasswordSerializer(data=request.data)
         if serializer.is_valid():
             token_obj = PasswordResetToken.objects.filter(token=token, is_used=False).first()
-            if not token_obj or (timezone.now() - token_obj.created_at).total_seconds() > 3600:  
+            if not token_obj or (timezone.now() - token_obj.created_at).total_seconds() > 3600:
                 logger.error(f"Token inválido ou expirado: {token}")
                 return Response({'error': 'Token inválido ou expirado'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -194,7 +269,7 @@ class ResetPasswordView(APIView):
             logger.info(f"Senha redefinida para {user.email}")
             return Response({'message': 'Senha redefinida com sucesso'}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
 class UserManagementView(APIView):
     permission_classes = [AdminPermission]
 
