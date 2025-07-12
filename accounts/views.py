@@ -4,8 +4,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
-from .serializers import RegisterSerializer, LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer, AttendanceSerializer, JustificationSerializer, JustificationApprovalSerializer
-from .models import CustomUser, PasswordResetToken, UserRole, Attendance, Justification, JustificationApproval
+from .serializers import RegisterSerializer, LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer, AttendanceSerializer, JustificationSerializer, JustificationApprovalSerializer, FacialRecognitionFailureSerializer, AttendanceUsersSerializer
+from .models import CustomUser, PasswordResetToken, UserRole, Attendance, Justification, JustificationApproval, FacialRecognitionFailure
 from .permission import AdminPermission
 import face_recognition
 import numpy as np
@@ -343,3 +343,35 @@ class JustificationApprovalView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Justification.DoesNotExist:
             return Response({'error': 'Justificativa não encontrada'}, status=status.HTTP_404_NOT_FOUND)
+
+class FacialFailureView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        reason = request.data.get('reason', '').strip()
+        date = request.data.get('date', timezone.now().date().isoformat())
+
+        if not reason or len(reason) < 5:
+            return Response({'reason': ['Garantir que este campo tenha no mínimo 5 caracteres.']}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            from datetime import datetime
+            datetime.strptime(date, '%Y-%m-%d')
+        except ValueError:
+            return Response({'date': ['Data inválida. Use o formato YYYY-MM-DD.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        failure = FacialRecognitionFailure.objects.create(
+            user=request.user,
+            reason=reason,
+            date=date
+        )
+        logger.info(f"Justificativa de falha de reconhecimento registrada para {request.user.username}: {reason}")
+        return Response({'message': 'Justificativa de falha de reconhecimento registrada com sucesso'}, status=status.HTTP_201_CREATED)
+
+class AttendanceUsersListView(ListCreateAPIView):
+    serializer_class = AttendanceUsersSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Obtém todos os usuários que têm registros em Attendance
+        users_with_attendance = CustomUser.objects.filter(attendance__isnull=False).distinct()
+        return users_with_attendance

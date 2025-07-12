@@ -63,3 +63,11 @@ class JustificationApproval(models.Model):
     def __str__(self):
         status = "Aprovada" if self.approved else "Reprovada" if self.approved is False else "Pendente"
         return f"{self.justification} - {status}"
+    
+class FacialRecognitionFailure(models.Model):
+    user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)
+    reason = models.TextField()
+    date = models.DateField(default=timezone.now)
+
+    def __str__(self):
+        return f"{self.user.username if self.user else 'Desconhecido'} - {self.reason[:20]}"

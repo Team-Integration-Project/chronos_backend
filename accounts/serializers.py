@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import CustomUser, Attendance, Justification, JustificationApproval
+from .models import CustomUser, Attendance, Justification, JustificationApproval, FacialRecognitionFailure
 import numpy as np
 import face_recognition
 from django.core.files.uploadedfile import InMemoryUploadedFile
@@ -105,3 +105,17 @@ class JustificationApprovalSerializer(serializers.ModelSerializer):
         model = JustificationApproval
         fields = ['id', 'justification', 'justification_detail', 'approved', 'reviewed_by', 'reviewed_at']
         read_only_fields = ['id', 'reviewed_by', 'reviewed_at']
+
+class FacialRecognitionFailureSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FacialRecognitionFailure
+        fields = ['id', 'user', 'reason', 'date']
+
+class AttendanceUsersSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='__str__')
+    cpf = serializers.CharField()
+    phone_number = serializers.CharField()
+
+    class Meta:
+        model = CustomUser
+        fields = ['id', 'username', 'cpf', 'phone_number']
