@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import CustomUser, Attendance, Justification
+from .models import CustomUser, Attendance, Justification, JustificationApproval
 import numpy as np
 import face_recognition
 from django.core.files.uploadedfile import InMemoryUploadedFile
@@ -91,8 +91,17 @@ class JustificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Justification
         fields = ['id', 'user', 'date', 'reason', 'created_at']
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'created_at', 'user']
         extra_kwargs = {
             'reason': {'required': True, 'min_length': 5},
             'date': {'required': True},
         }
+
+class JustificationApprovalSerializer(serializers.ModelSerializer):
+    justification_detail = JustificationSerializer(source='justification', read_only=True)
+    reviewed_by = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = JustificationApproval
+        fields = ['id', 'justification', 'justification_detail', 'approved', 'reviewed_by', 'reviewed_at']
+        read_only_fields = ['id', 'reviewed_by', 'reviewed_at']

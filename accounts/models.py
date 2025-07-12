@@ -53,3 +53,13 @@ class Justification(models.Model):
 
     def __str__(self):
         return f"{self.user.username if self.user else 'Desconhecido'} - Justificativa em {self.date}"
+
+class JustificationApproval(models.Model):
+    justification = models.OneToOneField(Justification, on_delete=models.CASCADE, related_name='approval')
+    approved = models.BooleanField(null=True)  
+    reviewed_by = models.ForeignKey(CustomUser, null=True, blank=True, on_delete=models.SET_NULL, related_name='reviewed_justifications')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        status = "Aprovada" if self.approved else "Reprovada" if self.approved is False else "Pendente"
+        return f"{self.justification} - {status}"

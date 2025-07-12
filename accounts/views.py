@@ -4,14 +4,17 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
-from .serializers import RegisterSerializer, LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer, AttendanceSerializer, JustificationSerializer
-from .models import CustomUser, PasswordResetToken, UserRole, Attendance, Justification
+from .serializers import RegisterSerializer, LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer, AttendanceSerializer, JustificationSerializer, JustificationApprovalSerializer
+from .models import CustomUser, PasswordResetToken, UserRole, Attendance, Justification, JustificationApproval
 from .permission import AdminPermission
 import face_recognition
 import numpy as np
 import logging
 import uuid
 import os
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.exceptions import PermissionDenied
 from django.core.mail import send_mail
 from django.utils import timezone
 from django.conf import settings
@@ -279,3 +282,64 @@ class UserManagementView(APIView):
         except Exception as e:
             logger.error(f"Erro ao excluir usuário {user_id}: {str(e)}")
             return Response({'error': 'Erro interno'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class JustificationListCreateView(ListCreateAPIView):
+    serializer_class = JustificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_admin:
+            return Justification.objects.all().order_by('-created_at')
+        return Justification.objects.filter(user=user).order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+class JustificationDetailView(RetrieveUpdateDestroyAPIView):
+    serializer_class = JustificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_admin:
+            return Justification.objects.all()
+        return Justification.objects.filter(user=user)
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if not self.request.user.is_admin and instance.user != self.request.user:
+            raise PermissionDenied("Você não tem permissão para editar esta justificativa.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self.request.user.is_admin and instance.user != self.request.user:
+            raise PermissionDenied("Você não tem permissão para excluir esta justificativa.")
+        instance.delete()
+
+class JustificationApprovalView(APIView):
+    permission_classes = [AdminPermission]
+
+    def post(self, request, justification_id):
+        try:
+            justification = Justification.objects.get(id=justification_id)
+            approved = request.data.get('approved')
+
+            if approved not in [True, False, 'true', 'false', 'True', 'False', 1, 0, '1', '0']:
+                return Response({'error': 'Campo "approved" deve ser true ou false'}, status=status.HTTP_400_BAD_REQUEST)
+
+            approved_bool = str(approved).lower() in ['true', '1']
+
+            approval, created = JustificationApproval.objects.update_or_create(
+                justification=justification,
+                defaults={
+                    'approved': approved_bool,
+                    'reviewed_by': request.user,
+                    'reviewed_at': timezone.now()
+                }
+            )
+
+            serializer = JustificationApprovalSerializer(approval)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Justification.DoesNotExist:
+            return Response({'error': 'Justificativa não encontrada'}, status=status.HTTP_404_NOT_FOUND)

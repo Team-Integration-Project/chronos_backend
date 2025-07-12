@@ -19,7 +19,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 
-from accounts.views import RegisterView, LoginView, MarkAttendanceView, CameraTestView, ForgotPasswordView, ResetPasswordView, UserManagementView
+from accounts.views import RegisterView, LoginView, MarkAttendanceView, CameraTestView, ForgotPasswordView, ResetPasswordView, UserManagementView, JustificationListCreateView, JustificationDetailView, JustificationApprovalView
 from rest_framework_simplejwt.views import TokenRefreshView
 
 urlpatterns = [
@@ -31,5 +31,8 @@ urlpatterns = [
     path('camera-test/', CameraTestView.as_view(), name='camera_test'),
     path('api/forgot-password/', ForgotPasswordView.as_view(), name='forgot-password'),
     path('api/reset-password/<str:token>/', ResetPasswordView.as_view(), name='reset-password'),
-    path('api/users/manage/<int:user_id>/', UserManagementView.as_view(), name='user_management')
+    path('api/users/manage/<int:user_id>/', UserManagementView.as_view(), name='user_management'),
+    path('api/justification/', JustificationListCreateView.as_view(), name='list-create-justification'),
+    path('api/justification/<int:pk>/', JustificationDetailView.as_view(), name='detail-edit-delete-justification'),
+    path('api/justification/<int:justification_id>/approve/', JustificationApprovalView.as_view(), name='approve-justification'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
