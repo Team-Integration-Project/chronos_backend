@@ -385,3 +385,24 @@ class AttendanceListView(ListAPIView):
         if user.is_admin:
             return Attendance.objects.all().order_by('-data_hora')
         return Attendance.objects.filter(user=user).order_by('-data_hora')
+
+class UserAttendanceDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id):
+        try:
+            User = get_user_model()
+            user = User.objects.get(id=user_id)
+            attendances = Attendance.objects.filter(user=user).order_by('-data_hora')
+            attendance_count = attendances.count()
+            serializer = AttendanceSerializer(attendances, many=True)
+            return Response({
+                'user': user.username,
+                'total_attendances': attendance_count,
+                'attendances': serializer.data
+            }, status=status.HTTP_200_OK)
+        except ObjectDoesNotExist:
+            return Response({'error': 'Usuário não encontrado'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Erro ao buscar atendimentos: {str(e)}")
+            return Response({'error': 'Erro interno'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

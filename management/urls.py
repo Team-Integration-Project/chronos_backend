@@ -19,7 +19,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 
-from accounts.views import FacialFailureView, RegisterView, LoginView, MarkAttendanceView, CameraTestView, ForgotPasswordView, ResetPasswordView, UserManagementView, JustificationListCreateView, JustificationDetailView, JustificationApprovalView, AttendanceUsersListView, AttendanceListView
+from accounts.views import FacialFailureView, RegisterView, LoginView, MarkAttendanceView, CameraTestView, ForgotPasswordView, ResetPasswordView, UserManagementView, JustificationListCreateView, JustificationDetailView, JustificationApprovalView, AttendanceUsersListView, AttendanceListView, UserAttendanceDetailView
 from rest_framework_simplejwt.views import TokenRefreshView
 
 urlpatterns = [
@@ -38,4 +38,5 @@ urlpatterns = [
     path('api/facial-failures/', FacialFailureView.as_view(), name='create_facial_failure'),
     path('api/users-with-attendance/', AttendanceUsersListView.as_view(), name='users_with_attendance'),
     path('api/attendance/', AttendanceListView.as_view(), name='attendance_list'),
+    path('api/attendance/<int:user_id>/', UserAttendanceDetailView.as_view(), name='user_attendance_detail'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
