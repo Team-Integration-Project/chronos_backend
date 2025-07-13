@@ -13,7 +13,7 @@ import logging
 import uuid
 import os
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView, ListAPIView
 from rest_framework.exceptions import PermissionDenied
 from django.core.mail import send_mail
 from django.utils import timezone
@@ -375,3 +375,13 @@ class AttendanceUsersListView(ListCreateAPIView):
         # Obtém todos os usuários que têm registros em Attendance
         users_with_attendance = CustomUser.objects.filter(attendance__isnull=False).distinct()
         return users_with_attendance
+
+class AttendanceListView(ListAPIView):
+    serializer_class = AttendanceSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_admin:
+            return Attendance.objects.all().order_by('-data_hora')
+        return Attendance.objects.filter(user=user).order_by('-data_hora')
