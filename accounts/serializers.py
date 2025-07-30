@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import CustomUser, Attendance, Justification, JustificationApproval, FacialRecognitionFailure
+from .models import CustomUser, Attendance, Justification, JustificationApproval, FacialRecognitionFailure, UserRole  
 import numpy as np
 import face_recognition
 from django.core.files.uploadedfile import InMemoryUploadedFile
@@ -16,7 +16,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'email', 'password', 'confirm_password', 'phone_number', 'cpf', 'face_image']
+        fields = ['id', 'username', 'email', 'password', 'confirm_password', 'phone_number', 'cpf', 'face_image', 'role']  
     
     def validate(self, attrs):
         if attrs['password'] != attrs['confirm_password']:
@@ -25,6 +25,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         face_image = validated_data.pop('face_image')
+        validated_data.pop('confirm_password')  
         try:
             logger.info(f"Processando imagem: {face_image.name}, tamanho: {face_image.size}")
             image = face_recognition.load_image_file(face_image.file)
@@ -43,7 +44,8 @@ class RegisterSerializer(serializers.ModelSerializer):
             password=validated_data['password'],
             phone_number=validated_data['phone_number'],
             cpf=validated_data['cpf'],
-            facial_embedding=embedding.tolist()
+            facial_embedding=embedding.tolist(),
+            role=validated_data.get('role', UserRole.USER.value)  
         )
         return user
 
