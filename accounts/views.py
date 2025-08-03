@@ -22,6 +22,7 @@ from django.core.files.storage import default_storage
 from django.core.exceptions import ObjectDoesNotExist
 from PIL import Image
 
+
 logger = logging.getLogger(__name__)
 
 class RegisterView(APIView):

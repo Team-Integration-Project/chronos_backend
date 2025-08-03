@@ -36,7 +36,8 @@ MIDDLEWARE = [
 
 ALLOWED_HOSTS = ['*']
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = True  # Apenas para testes!
+
 
 ROOT_URLCONF = 'management.urls'
 
