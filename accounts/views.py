@@ -21,9 +21,12 @@ from django.conf import settings
 from django.core.files.storage import default_storage
 from django.core.exceptions import ObjectDoesNotExist
 from PIL import Image
-
+from django.db.models import Max
+from collections import defaultdict
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+User = get_user_model()
 
 class RegisterView(APIView):
     def post(self, request):
@@ -100,7 +103,6 @@ class MarkAttendanceView(APIView):
             img = Image.open(face_image)
             img.verify()
             img.close()
-            # Forçar leitura como JPEG para evitar problemas com .jpg
             image = face_recognition.load_image_file(face_image, mode='RGB')
             logger.info(f"Processando imagem: {face_image.name}, tamanho: {face_image.size} bytes")
             encodings = face_recognition.face_encodings(image)
@@ -142,15 +144,12 @@ class MarkAttendanceView(APIView):
 
             current_date = timezone.now().date()
             logger.info(f"Data atual considerada: {current_date}")
-            # Verificar todos os registros anteriores do usuário, não apenas do dia atual
             all_attendances = Attendance.objects.filter(user=matched_user).order_by('data_hora')
             registered_types = [a.point_type for a in all_attendances]
             logger.info(f"Todos os tipos de ponto registrados para {matched_user.username}: {registered_types}")
-            # Verificar sequência com base nos registros anteriores
             next_index = valid_types.index(point_type) if point_type in valid_types else -1
             if next_index > 0 and valid_types[next_index - 1] not in registered_types:
                 return Response({'error': f'Primeiro marque {valid_types[next_index - 1]}'}, status=status.HTTP_400_BAD_REQUEST)
-            # Verificar duplicatas apenas no dia atual
             if Attendance.objects.filter(user=matched_user, point_type=point_type, data_hora__date=current_date).exists():
                 return Response({'error': 'Tipo de ponto já registrado hoje'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -177,6 +176,10 @@ class MarkAttendanceView(APIView):
                 last_records = Attendance.objects.filter(user=matched_user).order_by('-data_hora')[:3]
                 response_data = {
                     'full_name': f"{matched_user.first_name or ''} {matched_user.last_name or ''}".strip() or matched_user.username,
+                    'cpf': matched_user.cpf or "",
+                    'funcao': getattr(matched_user, 'funcao', "") or "",  # Ajuste se 'funcao' não estiver no modelo
+                    'matricula': getattr(matched_user, 'matricula', "") or "",
+                    'empresa': getattr(matched_user, 'empresa', "") or "",
                     'date': attendance_data['data_hora'].date().isoformat(),
                     'last_records': AttendanceSerializer(last_records, many=True).data
                 }
@@ -370,7 +373,6 @@ class FacialFailureView(APIView):
 
 class AttendanceUsersListView(ListCreateAPIView):
     serializer_class = AttendanceUsersSerializer
-    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         # Obtém todos os usuários que têm registros em Attendance
@@ -379,7 +381,6 @@ class AttendanceUsersListView(ListCreateAPIView):
 
 class AttendanceListView(ListAPIView):
     serializer_class = AttendanceSerializer
-    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
@@ -388,22 +389,113 @@ class AttendanceListView(ListAPIView):
         return Attendance.objects.filter(user=user).order_by('-data_hora')
 
 class UserAttendanceDetailView(APIView):
-    permission_classes = [IsAuthenticated]
-
     def get(self, request, user_id):
         try:
-            User = get_user_model()
             user = User.objects.get(id=user_id)
-            attendances = Attendance.objects.filter(user=user).order_by('-data_hora')
+            period = request.query_params.get('period', 'mes').lower()
+
+            # Filtro por período
+            attendances = self._filter_attendances_by_period(user, period)
             attendance_count = attendances.count()
-            serializer = AttendanceSerializer(attendances, many=True)
+
+            # Agrupar atendimentos por data
+            attendance_data = self._group_attendances_by_date(attendances)
+
+            # Calcular estatísticas
+            stats = self._calculate_stats(attendance_data)
+
             return Response({
                 'user': user.username,
                 'total_attendances': attendance_count,
-                'attendances': serializer.data
+                'attendances': attendance_data,
+                'stats': stats
             }, status=status.HTTP_200_OK)
-        except ObjectDoesNotExist:
+
+        except User.DoesNotExist:
             return Response({'error': 'Usuário não encontrado'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Erro ao buscar atendimentos: {str(e)}")
             return Response({'error': 'Erro interno'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _filter_attendances_by_period(self, user, period):
+        """Filtra os atendimentos com base no período especificado."""
+        today = timezone.now().date()  # Ajustado para fuso de Brasília
+        attendances = Attendance.objects.filter(user=user).order_by('-data_hora')
+
+        if period == 'hoje':
+            return attendances.filter(data_hora__date=today)
+        elif period == 'semana':
+            week_start = today - timezone.timedelta(days=today.weekday())
+            return attendances.filter(data_hora__date__gte=week_start, data_hora__date__lte=today)
+        elif period == 'mes':
+            return attendances.filter(data_hora__month=today.month, data_hora__year=today.year)
+        elif period == 'ano':
+            return attendances.filter(data_hora__year=today.year)
+        return attendances
+
+    def _group_attendances_by_date(self, attendances):
+        """Agrupar atendimentos por data e mapear para o formato esperado."""
+        attendance_dict = defaultdict(list)
+        for attendance in attendances:
+            date_str = attendance.data_hora.astimezone(timezone.get_current_timezone()).strftime('%d/%m/%Y')
+            attendance_dict[date_str].append(attendance)
+
+        attendance_data = []
+        for date_str, atts in attendance_dict.items():
+            day_data = {'id': str(atts[0].id), 'date': date_str}
+            # Mapear horários com base em point_type
+            for att in atts:
+                time_str = att.data_hora.astimezone(timezone.get_current_timezone()).strftime('%H:%M')
+                if att.point_type == 'entrada':
+                    day_data['entrada'] = time_str
+                elif att.point_type == 'almoco':
+                    day_data['entrada_almoco'] = time_str
+                    day_data['saida_almoco'] = time_str  # Simplificado, ajuste se houver saída de almoço separada
+                elif att.point_type == 'saida':
+                    day_data['saida'] = time_str
+            # Preencher campos ausentes com '-'
+            day_data.setdefault('entrada', '-')
+            day_data.setdefault('entrada_almoco', '-')
+            day_data.setdefault('saida_almoco', '-')
+            day_data.setdefault('saida', '-')
+            day_data['status'] = 'Aprovado'  # Ajuste conforme lógica de status
+            day_data['observacao'] = ''
+            attendance_data.append(day_data)
+
+        return attendance_data
+
+    def _calculate_stats(self, attendance_data):
+        """Calcula estatísticas baseadas nos atendimentos, focando em horas."""
+        total_hours = 0
+        for day in attendance_data:
+            try:
+                if day['entrada'] != '-' and day['saida'] != '-':
+                    # Converter horários para objetos datetime
+                    entrada = datetime.strptime(day['entrada'], '%H:%M')
+                    saida = datetime.strptime(day['saida'], '%H:%M')
+                    # Ajustar para o mesmo dia com fuso de Brasília
+                    today_br = timezone.now().date()
+                    entrada = entrada.replace(year=today_br.year, month=today_br.month, day=today_br.day)
+                    saida = saida.replace(year=today_br.year, month=today_br.month, day=today_br.day)
+
+                    # Calcular intervalo de almoço, se existir
+                    almoco_in = day['entrada_almoco'] if day['entrada_almoco'] != '-' else None
+                    almoco_out = day['saida_almoco'] if day['saida_almoco'] != '-' else None
+                    almoco_duration = timedelta(hours=0)
+                    if almoco_in and almoco_out:
+                        almoco_in_dt = datetime.strptime(almoco_in, '%H:%M').replace(year=today_br.year, month=today_br.month, day=today_br.day)
+                        almoco_out_dt = datetime.strptime(almoco_out, '%H:%M').replace(year=today_br.year, month=today_br.month, day=today_br.day)
+                        almoco_duration = almoco_out_dt - almoco_in_dt
+
+                    # Calcular horas trabalhadas (saida - entrada - intervalo de almoço)
+                    work_duration = saida - entrada - almoco_duration
+                    total_hours += work_duration.total_seconds() / 3600  # Converter para horas
+            except ValueError:
+                continue  # Ignorar se os horários forem inválidos
+
+        return {
+            'total_horas': round(total_hours, 2),  # Arredondar pra 2 casas decimais
+            'total_faltas': 0,  # Temporariamente zerado
+            'total_atrasos': 0,  # Temporariamente zerado
+            'total_justificativas': 0  # Temporariamente zerado
+        }

@@ -7,6 +7,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
 
+TIME_ZONE = 'America/Sao_Paulo'
+USE_TZ = True
+
 SECRET_KEY = 'django-insecure-)9ii$2pp_wd39fm9)3jj+1ud!tbqq+wedeht)d*ensc4j_b@yn'
 DEBUG = True
 
