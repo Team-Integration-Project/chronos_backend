@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
-from .serializers import RegisterSerializer, LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer, AttendanceSerializer, JustificationSerializer, JustificationApprovalSerializer, FacialRecognitionFailureSerializer, AttendanceUsersSerializer
+from .serializers import RegisterSerializer, LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer, AttendanceSerializer, JustificationSerializer, JustificationApprovalSerializer, FacialRecognitionFailureSerializer, AttendanceUsersSerializer, UserProfileSerializer
 from .models import CustomUser, PasswordResetToken, UserRole, Attendance, Justification, JustificationApproval, FacialRecognitionFailure
 from .permission import AdminPermission
 import face_recognition
@@ -12,7 +12,8 @@ import numpy as np
 import logging
 import uuid
 import os
-from rest_framework.permissions import IsAuthenticated
+import re
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView, ListAPIView
 from rest_framework.exceptions import PermissionDenied
 from django.core.mail import send_mail
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 class RegisterView(APIView):
+
+    permission_classes = [AllowAny]
+
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
@@ -50,6 +54,9 @@ class RegisterView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class LoginView(APIView):
+
+    permission_classes = [AllowAny]
+
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         if serializer.is_valid():
@@ -79,10 +86,14 @@ class LoginView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class CameraTestView(APIView):
+    permission_classes = [AllowAny]
+
     def get(self, request):
         return render(request, 'accounts/index.html')
 
 class MarkAttendanceView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def post(self, request):
         logger.info(f"Requisição recebida: {request.FILES}, {request.data}, Content-Type: {request.headers.get('Content-Type')}")
         face_image = request.FILES.get('face_image')
@@ -137,7 +148,7 @@ class MarkAttendanceView(APIView):
                     matched_user = u
 
         logger.info(f"Mínima distância encontrada: {min_distance}, usuário correspondente: {matched_user.username if matched_user else 'Nenhum'}")
-        if matched_user and min_distance < 0.4:
+        if matched_user and min_distance < 0.5:
             valid_types = ['entrada', 'almoco', 'saida']
             if point_type not in valid_types:
                 return Response({'error': 'Tipo de ponto inválido'}, status=status.HTTP_400_BAD_REQUEST)
@@ -499,3 +510,102 @@ class UserAttendanceDetailView(APIView):
             'total_atrasos': 0,  # Temporariamente zerado
             'total_justificativas': 0  # Temporariamente zerado
         }
+
+class UserProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        serializer = UserProfileSerializer(request.user)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        user = request.user
+        serializer = UserProfileSerializer(user, data=request.data, partial=True) 
+        if serializer.is_valid():
+
+            cpf = request.data.get('cpf', '')
+            phone_number = request.data.get('phone_number', '')
+
+            if cpf and not re.match(r'^\d{11}$', cpf):
+                logger.error(f"CPF inválido para usuário {user.email}: {cpf}")
+                return Response(
+                    {'cpf': 'CPF deve conter 11 dígitos numéricos.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if phone_number and not re.match(r'^\d{10,11}$', phone_number):
+                logger.error(f"Telefone inválido para usuário {user.email}: {phone_number}")
+                return Response(
+                    {'phone_number': 'Telefone deve conter 10 ou 11 dígitos numéricos.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            serializer.save()
+            logger.info(f"Perfil do usuário {user.email} atualizado com sucesso")
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        logger.error(f"Erro ao atualizar perfil do usuário {user.email}: {serializer.errors}")
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class UserListManageView(APIView):
+    permission_classes = [IsAuthenticated, AdminPermission]
+
+    def get(self, request):
+        try:
+            users = CustomUser.objects.filter(role=UserRole.USER.value)
+            serializer = UserProfileSerializer(users, many=True)
+            logger.info(f"Lista de usuários comuns retornada para {request.user.email}")
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Erro ao listar usuários comuns: {str(e)}")
+            return Response({'error': 'Erro interno ao listar usuários'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def put(self, request, user_id):
+        try:
+            user = CustomUser.objects.get(id=user_id, role=UserRole.USER.value)
+            serializer = UserProfileSerializer(user, data=request.data, partial=True)
+            if serializer.is_valid():
+                cpf = request.data.get('cpf', '')
+                phone_number = request.data.get('phone_number', '')
+
+                if cpf and not re.match(r'^\d{11}$', cpf):
+                    logger.error(f"CPF inválido para usuário {user.email}: {cpf}")
+                    return Response(
+                        {'cpf': 'CPF deve conter 11 dígitos numéricos.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                if phone_number and not re.match(r'^\d{10,11}$', phone_number):
+                    logger.error(f"Telefone inválido para usuário {user.email}: {phone_number}")
+                    return Response(
+                        {'phone_number': 'Telefone deve conter 10 ou 11 dígitos numéricos.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                serializer.save()
+                logger.info(f"Usuário {user.email} editado por {request.user.email}")
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            logger.error(f"Erro ao editar usuário {user_id}: {serializer.errors}")
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except CustomUser.DoesNotExist:
+            logger.error(f"Usuário com ID {user_id} não encontrado ou não é um usuário comum")
+            return Response({'error': 'Usuário não encontrado ou não é um usuário comum'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Erro ao editar usuário {user_id}: {str(e)}")
+            return Response({'error': 'Erro interno'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def delete(self, request, user_id):
+        try:
+            user = CustomUser.objects.get(id=user_id, role=UserRole.USER.value)
+            if user.id == request.user.id:
+                logger.error(f"Tentativa de excluir a si mesmo por {request.user.email}")
+                return Response({'error': 'Não é possível excluir a si mesmo'}, status=status.HTTP_403_FORBIDDEN)
+            user_email = user.email
+            user.delete()
+            logger.info(f"Usuário {user_email} excluído por {request.user.email}")
+            return Response({'message': 'Usuário excluído com sucesso'}, status=status.HTTP_200_OK)
+        except CustomUser.DoesNotExist:
+            logger.error(f"Usuário com ID {user_id} não encontrado ou não é um usuário comum")
+            return Response({'error': 'Usuário não encontrado ou não é um usuário comum'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Erro ao excluir usuário {user_id}: {str(e)}")
+            return Response({'error': 'Erro interno'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

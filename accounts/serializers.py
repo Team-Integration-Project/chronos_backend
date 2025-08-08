@@ -120,4 +120,9 @@ class AttendanceUsersSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'cpf', 'phone_number']
+        fields = ['id', 'username', 'email', 'cpf', 'phone_number']
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomUser
+        fields = ['id', 'username', 'email', 'role', 'phone_number', 'cpf']
