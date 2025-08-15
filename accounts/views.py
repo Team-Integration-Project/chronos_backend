@@ -13,6 +13,7 @@ import logging
 import uuid
 import os
 import re
+import random
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView, ListAPIView
 from rest_framework.exceptions import PermissionDenied
@@ -210,54 +211,95 @@ class MarkAttendanceView(APIView):
             return Response({'error': 'Rosto não corresponde ou nenhum usuário encontrado'}, status=status.HTTP_401_UNAUTHORIZED)
 
 class ForgotPasswordView(APIView):
+
+    permission_classes = [AllowAny]
+
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data['email']
-            User = get_user_model()
             try:
                 user = User.objects.get(email=email)
             except User.DoesNotExist:
-                logger.warning(f"Tentativa de redefinição para email inexistente: {email}")
-                return Response({'message': 'Se o email existir, um link será enviado.'}, status=status.HTTP_200_OK)
+                return Response({'message': 'Se o email existir, um código será enviado.'}, status=status.HTTP_200_OK)
 
-            token = str(uuid.uuid4())
+            otp_code = str(random.randint(100000, 999999))
+
             PasswordResetToken.objects.update_or_create(
                 user=user,
-                defaults={'token': token, 'is_used': False, 'created_at': timezone.now()}
+                defaults={
+                    'token': otp_code,
+                    'is_used': False,
+                    'created_at': timezone.now()
+                }
             )
+            subject = 'Código de Redefinição de Senha'
+            message = f"Olá {user.username},\n\nSeu código de redefinição de senha é: {otp_code}\nEle expira em 10 minutos."
+            send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email])
 
-            reset_link = f"http://127.0.0.1:8000/api/reset-password/{token}/"
-            subject = 'Redefinição de Senha'
-            message = f"Olá {user.username},\n\nClique no link para redefinir sua senha: {reset_link}\n\nEste link expira em 1 hora."
-            from_email = settings.DEFAULT_FROM_EMAIL
-            try:
-                send_mail(subject, message, from_email, [email])
-                logger.info(f"Email de redefinição enviado para {email}")
-                return Response({'message': 'Se o email existir, um link foi enviado.'}, status=status.HTTP_200_OK)
-            except Exception as e:
-                logger.error(f"Erro ao enviar email para {email}: {str(e)}")
-                return Response({'error': 'Erro ao enviar email'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'message': 'Se o email existir, um código foi enviado.'}, status=status.HTTP_200_OK)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class VerifyResetCodeView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        code = request.data.get('code')
+        email = request.data.get('email')
+
+        if not code or not email:
+            return Response({'error': 'Código e email são obrigatórios'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=email)
+            token_obj = PasswordResetToken.objects.filter(user=user, token=code, is_used=False).first()
+
+            if not token_obj:
+                return Response({'error': 'Código inválido'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if (timezone.now() - token_obj.created_at).total_seconds() > 600:
+                return Response({'error': 'Código expirado'}, status=status.HTTP_400_BAD_REQUEST)
+
+            return Response({'message': 'Código válido'}, status=status.HTTP_200_OK)
+
+        except User.DoesNotExist:
+            return Response({'error': 'Código inválido'}, status=status.HTTP_400_BAD_REQUEST)
+
 
 class ResetPasswordView(APIView):
-    def post(self, request, token):
-        serializer = ResetPasswordSerializer(data=request.data)
-        if serializer.is_valid():
-            token_obj = PasswordResetToken.objects.filter(token=token, is_used=False).first()
-            if not token_obj or (timezone.now() - token_obj.created_at).total_seconds() > 3600:
-                logger.error(f"Token inválido ou expirado: {token}")
-                return Response({'error': 'Token inválido ou expirado'}, status=status.HTTP_400_BAD_REQUEST)
+    permission_classes = [AllowAny]
 
-            new_password = serializer.validated_data['new_password']
-            user = token_obj.user
-            user.set_password(new_password)
+    def post(self, request):
+        email = request.data.get('email')
+        code = request.data.get('code')
+        password = request.data.get('new_password')
+
+        if not email or not code or not password:
+            return Response({'error': 'Email, código e nova senha são obrigatórios'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=email)
+            token_obj = PasswordResetToken.objects.filter(user=user, token=code, is_used=False).first()
+
+            if not token_obj:
+                return Response({'error': 'Código inválido'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if (timezone.now() - token_obj.created_at).total_seconds() > 600:
+                return Response({'error': 'Código expirado'}, status=status.HTTP_400_BAD_REQUEST)
+
+            user.set_password(password)
             user.save()
+
             token_obj.is_used = True
             token_obj.save()
-            logger.info(f"Senha redefinida para {user.email}")
+
             return Response({'message': 'Senha redefinida com sucesso'}, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        except User.DoesNotExist:
+            return Response({'error': 'Código inválido'}, status=status.HTTP_400_BAD_REQUEST)
+
 
 class UserManagementView(APIView):
     permission_classes = [AdminPermission]

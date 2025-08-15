@@ -19,7 +19,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 
-from accounts.views import FacialFailureView, RegisterView, LoginView, MarkAttendanceView, CameraTestView, ForgotPasswordView, ResetPasswordView, UserManagementView, JustificationListCreateView, JustificationDetailView, JustificationApprovalView, AttendanceUsersListView, AttendanceListView, UserAttendanceDetailView, UserProfileSerializer, UserProfileView, UserListManageView
+from accounts.views import FacialFailureView, RegisterView, LoginView, MarkAttendanceView, CameraTestView, ForgotPasswordView, ResetPasswordView, UserManagementView, JustificationListCreateView, JustificationDetailView, JustificationApprovalView, AttendanceUsersListView, AttendanceListView, UserAttendanceDetailView, UserProfileSerializer, UserProfileView, UserListManageView, VerifyResetCodeView
 from rest_framework_simplejwt.views import TokenRefreshView
 
 urlpatterns = [
@@ -30,7 +30,8 @@ urlpatterns = [
     path('api/mark-attendance/', MarkAttendanceView.as_view(), name='mark_attendance'),
     path('camera-test/', CameraTestView.as_view(), name='camera_test'),
     path('api/forgot-password/', ForgotPasswordView.as_view(), name='forgot-password'),
-    path('api/reset-password/<str:token>/', ResetPasswordView.as_view(), name='reset-password'),
+    path('api/verify-reset-code/', VerifyResetCodeView.as_view(), name='verify-reset-code'),  
+    path('api/reset-password/', ResetPasswordView.as_view(), name='reset-password'),
     path('api/users/manage/<int:user_id>/', UserManagementView.as_view(), name='user_management'),
     path('api/justification/', JustificationListCreateView.as_view(), name='list-create-justification'),
     path('api/justification/<int:pk>/', JustificationDetailView.as_view(), name='detail-edit-delete-justification'),
