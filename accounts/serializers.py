@@ -1,9 +1,8 @@
 from rest_framework import serializers
 from .models import CustomUser, Attendance, Justification, JustificationApproval, FacialRecognitionFailure, UserRole  
-import numpy as np
-import face_recognition
 from django.core.files.uploadedfile import InMemoryUploadedFile
 import logging
+from .services import process_face_image_and_get_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +26,9 @@ class RegisterSerializer(serializers.ModelSerializer):
         face_image = validated_data.pop('face_image')
         validated_data.pop('confirm_password')  
         try:
-            logger.info(f"Processando imagem: {face_image.name}, tamanho: {face_image.size}")
-            image = face_recognition.load_image_file(face_image.file)
-            encodings = face_recognition.face_encodings(image)
-            if not encodings:
-                raise serializers.ValidationError("Nenhum rosto detectado na imagem.")
-            embedding = encodings[0]
-            logger.info(f"Embedding gerado com sucesso: {embedding.tolist()}")
-        except Exception as e:
-            logger.error(f"Erro ao processar imagem facial: {str(e)}")
-            raise serializers.ValidationError(f"Erro ao processar imagem: {str(e)}")
+            embedding = process_face_image_and_get_embedding(face_image)
+        except ValueError as e:
+            raise serializers.ValidationError(str(e))
 
         user = CustomUser.objects.create_user(
             username=validated_data['username'],

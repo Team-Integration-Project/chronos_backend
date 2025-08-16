@@ -3,12 +3,33 @@ from django.contrib.auth.models import AbstractUser
 from pgvector.django import VectorField
 from enum import Enum
 from django.utils import timezone
+from django.core.validators import RegexValidator
 
 class UserRole(Enum):
     USER = "user"
     ADMIN = "admin"
 
 class CustomUser(AbstractUser):
+    username_regex_validator = RegexValidator(
+        regex=r'^[\w .+-]+$',
+        message=(
+            "Enter a valid username. This value may contain only letters, "
+            "numbers, and @/./+/-/ _ characters, and spaces."
+        ),
+    )
+
+    username = models.CharField(
+        ("username"),
+        max_length=150,
+        unique=True,
+        help_text=(
+            "Required. 150 characters or fewer. Letters, digits and @/./+/-/ _ and spaces only."
+        ),
+        validators=[username_regex_validator],
+        error_messages={
+            "unique": ("A user with that username already exists."),
+        },
+    )
     email = models.EmailField(unique=True)
     facial_embedding = VectorField(dimensions=128, null=True, blank=True)
     role = models.CharField(max_length=10, choices=[(role.value, role.value) for role in UserRole], default=UserRole.USER.value)
