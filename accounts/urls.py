@@ -5,6 +5,7 @@ from accounts.views.attendance_views import MarkAttendanceView, AttendanceUsersL
 from accounts.views.justification_views import JustificationListCreateView, JustificationDetailView, JustificationApprovalView
 from accounts.views.facial_recognition_views import FacialFailureView
 from rest_framework_simplejwt.views import TokenRefreshView
+from accounts.views.attendance_views import MyAttendanceReportView
 
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
@@ -22,6 +23,7 @@ urlpatterns = [
     path('users-with-attendance/', AttendanceUsersListView.as_view(), name='users_with_attendance'),
     path('attendance/', AttendanceListView.as_view(), name='attendance_list'),
     path('attendance/<int:user_id>/', UserAttendanceDetailView.as_view(), name='user_attendance_detail'),
+    path('attendance/me/', MyAttendanceReportView.as_view(), name='my_attendance_report'),
     path('profile/', UserProfileView.as_view(), name='user-profile'),
     path('list-manage/', UserListManageView.as_view(), name='user_list_manage'),
     path('list-manage/<int:user_id>/', UserListManageView.as_view(), name='user_list_manage_detail'),

@@ -27,11 +27,16 @@ class RegisterView(APIView):
                 user = serializer.save()
                 user.role = role
                 user.save()
-                refresh = RefreshToken.for_user(user)
                 return Response({
-                    'refresh': str(refresh),
-                    'access': str(refresh.access_token),
-                    'user': RegisterSerializer(user).data
+                    'message': 'Usuário registrado com sucesso.',
+                    'user': {
+                        'user_id': user.id,
+                        'username': user.username,
+                        'email': user.email,
+                        'cpf': user.cpf,
+                        'phone_number': user.phone_number,
+                        'role': user.role
+                    }
                 }, status=status.HTTP_201_CREATED)
             except Exception as e:
                 logger.error(f"Erro ao registrar usuário: {str(e)}")

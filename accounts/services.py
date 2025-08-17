@@ -11,9 +11,12 @@ from django.core.files.storage import default_storage
 
 logger = logging.getLogger(__name__)
 
-def filter_attendances_by_period(user, period):
+def filter_attendances_by_period(user, period, start_date=None, end_date=None):
     today = timezone.now().date()
     attendances = Attendance.objects.filter(user=user).order_by('-data_hora')
+
+    if start_date and end_date:
+        return attendances.filter(data_hora__date__gte=start_date, data_hora__date__lte=end_date)
 
     if period == 'hoje':
         return attendances.filter(data_hora__date=today)
@@ -78,7 +81,7 @@ def calculate_day_status(day_data):
     
     return 'Aprovado'
 
-def calculate_stats(user, attendance_data, total_justificativas):
+def calculate_stats(user, attendance_data, total_justificativas, total_pontos_registrados):
     total_hours = 0
     total_faltas = 0
     total_atrasos = 0
@@ -96,40 +99,28 @@ def calculate_stats(user, attendance_data, total_justificativas):
     
     if not first_attendance_date:
         return {
-            'totalHoras': 0,
-            'totalFaltas': 0,
-            'totalAtrasos': 0,
-            'totalJustificativas': total_justificativas
+            'dias_trabalhados': 0,
+            'total_pontos_registrados': total_pontos_registrados,
+            'total_justificativas': total_justificativas,
+            'horas_trabalhadas_total': 0,
+            'total_faltas': 0,
+            'total_atrasos': 0,
         }
     
     print(f"Primeira data com ponto batido: {first_attendance_date}")
     
-    today = timezone.now().date()
-    current_date = first_attendance_date
-    dias_uteis_esperados = 0
-    
-    while current_date <= today:
-        if current_date.weekday() < 5:
-            dias_uteis_esperados += 1
-        current_date += timezone.timedelta(days=1)
-    
-    print(f"Dias úteis esperados desde {first_attendance_date}: {dias_uteis_esperados}")
     
     dias_com_presenca = 0
-    
+    total_faltas = 0
+
     for day in attendance_data:
         status = day.get('status', '')
         day_date = datetime.strptime(day['date'], '%d/%m/%Y').date()
         
-        if day_date < first_attendance_date:
-            continue
-        
-        if day_date.weekday() >= 5:
-            continue
-        
-        if status == 'Falta':
+        if day_date.weekday() < 5 and status == 'Falta':
             total_faltas += 1
-        elif status == 'Atraso':
+        
+        if status == 'Atraso':
             total_atrasos += 1
         
         if status in ['Aprovado', 'Atraso']:
@@ -177,15 +168,17 @@ def calculate_stats(user, attendance_data, total_justificativas):
                 print(f"Erro ao calcular horas para o dia {day.get('date', '?')}: {e}")
                 continue
     
-    total_faltas = max(0, dias_uteis_esperados - dias_com_presenca)
+    total_faltas = max(0, total_faltas) 
     
     print(f"Resumo: {total_hours:.1f}h trabalhadas, {total_faltas} faltas, {total_atrasos} atrasos")
 
     return {
-        'totalHoras': round(total_hours, 1),
-        'totalFaltas': total_faltas,
-        'totalAtrasos': total_atrasos,
-        'totalJustificativas': total_justificativas
+        'dias_trabalhados': dias_com_presenca, 
+        'total_pontos_registrados': total_pontos_registrados, 
+        'total_justificativas': total_justificativas,
+        'horas_trabalhadas_total': round(total_hours, 1), 
+        'total_faltas': total_faltas,
+        'total_atrasos': total_atrasos,
     }
 
 def process_face_image_and_get_embedding(face_image):

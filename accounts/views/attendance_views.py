@@ -9,6 +9,8 @@ from accounts.models import Attendance, Justification, JustificationApproval, Cu
 from django.utils import timezone
 import logging
 from ..services import filter_attendances_by_period, group_attendances_by_date, calculate_day_status, calculate_stats, process_face_image_and_get_embedding, find_matching_user, save_attendance_photo
+from collections import defaultdict
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -114,11 +116,36 @@ class UserAttendanceDetailView(APIView):
         try:
             user = User.objects.get(id=user_id)
             period = request.query_params.get('period', 'mes').lower()
+            
+            start_date_str = request.query_params.get('start_date')
+            end_date_str = request.query_params.get('end_date')
 
-            attendances_display = filter_attendances_by_period(user, period)
+            start_date = None
+            end_date = None
+
+            if start_date_str and end_date_str:
+                try:
+                    start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                    end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+                except ValueError:
+                    return Response({'error': 'Formato de data inválido. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            attendances_display = filter_attendances_by_period(user, period, start_date=start_date, end_date=end_date)
+            logger.info(f"UserAttendanceDetailView: Usuário {user.username}, Período {period}, Atendimentos filtrados: {attendances_display.count()}")
             attendance_count = attendances_display.count()
 
             attendance_data = group_attendances_by_date(attendances_display)
+
+            recent_activities = defaultdict(list)
+            for att in attendances_display:
+                date_str = att.data_hora.astimezone(timezone.get_current_timezone()).strftime('%d/%m/%Y')
+                recent_activities[date_str].append({
+                    'id': att.id,
+                    'point_type': att.point_type,
+                    'data_hora': att.data_hora.isoformat(),
+                    'foto_path': att.foto_path.url if att.foto_path else None,
+                })
+            logger.info(f"UserAttendanceDetailView: `recent_activities` (para exibição na tabela): {recent_activities}")
 
             all_attendances = Attendance.objects.filter(user=user).order_by('-data_hora')
             all_attendance_data = group_attendances_by_date(all_attendances)
@@ -129,12 +156,15 @@ class UserAttendanceDetailView(APIView):
                 date_str = j.date.strftime('%d/%m/%Y') if j.date else timezone.now().date().strftime('%d/%m/%Y')
                 justification_map[date_str] = j.reason
 
-            stats = calculate_stats(user, all_attendance_data, justifications.count())
+            stats = calculate_stats(user, all_attendance_data, justifications.count(), attendance_count) 
+
+            stats['cpf'] = user.cpf if user.cpf else 'N/A'
+            stats['role'] = user.role if user.role else 'N/A'
 
             return Response({
                 'user': user.username,
                 'total_attendances': attendance_count,
-                'attendances': attendance_data,
+                'attendances': attendance_data, 
                 'stats': stats
             }, status=status.HTTP_200_OK)
 
@@ -143,3 +173,68 @@ class UserAttendanceDetailView(APIView):
         except Exception as e:
             logger.error(f"Erro ao buscar atendimentos: {str(e)}")
             return Response({'error': 'Erro interno'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class MyAttendanceReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+            if not user.is_authenticated:
+                return Response({'error': 'Autenticação necessária'}, status=status.HTTP_401_UNAUTHORIZED)
+
+            period = request.query_params.get('period', 'mes').lower()
+            
+            start_date_str = request.query_params.get('start_date')
+            end_date_str = request.query_params.get('end_date')
+
+            start_date = None
+            end_date = None
+
+            if start_date_str and end_date_str:
+                try:
+                    start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                    end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+                except ValueError:
+                    return Response({'error': 'Formato de data inválido. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            attendances_display = filter_attendances_by_period(user, period, start_date=start_date, end_date=end_date)
+            logger.info(f"MyAttendanceReportView: Usuário {user.username}, Período {period}, Atendimentos encontrados: {attendances_display.count()}")
+            attendance_count = attendances_display.count()
+
+            attendance_data = group_attendances_by_date(attendances_display) 
+
+            recent_activities = defaultdict(list)
+            for att in attendances_display:
+                date_str = att.data_hora.astimezone(timezone.get_current_timezone()).strftime('%d/%m/%Y')
+                recent_activities[date_str].append({
+                    'id': att.id,
+                    'point_type': att.point_type,
+                    'data_hora': att.data_hora.isoformat(),
+                    'foto_path': att.foto_path.url if att.foto_path else None,
+                })
+
+            all_attendances = Attendance.objects.filter(user=user).order_by('-data_hora')
+            all_attendance_data = group_attendances_by_date(all_attendances)
+
+            justifications = Justification.objects.filter(user=user)
+            justification_map = {}
+            for j in justifications:
+                date_str = j.date.strftime('%d/%m/%Y') if j.date else timezone.now().date().strftime('%d/%m/%Y')
+                justification_map[date_str] = j.reason
+
+            stats = calculate_stats(user, all_attendance_data, justifications.count(), attendance_count) 
+
+            stats['cpf'] = user.cpf if user.cpf else 'N/A'
+            stats['role'] = user.role if user.role else 'N/A'
+
+            return Response({
+                'user': user.username,
+                'total_attendances': attendance_count,
+                'attendances': attendance_data, 
+                'stats': stats
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Erro ao buscar atendimentos do próprio usuário: {str(e)}")
+            return Response({'error': 'Erro interno ao buscar relatórios'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
