@@ -1,0 +1,6 @@
+FROM postgres:14
+
+RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && apt-get update \
+    && apt-get install -y postgresql-14-pgvector \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*

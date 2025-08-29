@@ -1,9 +1,8 @@
 from rest_framework import serializers
-from .models import CustomUser, Attendance, Justification, JustificationApproval, FacialRecognitionFailure
-import numpy as np
-import face_recognition
+from .models import CustomUser, Attendance, Justification, JustificationApproval, FacialRecognitionFailure, UserRole  
 from django.core.files.uploadedfile import InMemoryUploadedFile
 import logging
+from .services import process_face_image_and_get_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +15,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'email', 'password', 'confirm_password', 'phone_number', 'cpf', 'face_image']
+        fields = ['id', 'username', 'email', 'password', 'confirm_password', 'phone_number', 'cpf', 'face_image', 'role']  
     
     def validate(self, attrs):
         if attrs['password'] != attrs['confirm_password']:
@@ -25,17 +24,11 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         face_image = validated_data.pop('face_image')
+        validated_data.pop('confirm_password')  
         try:
-            logger.info(f"Processando imagem: {face_image.name}, tamanho: {face_image.size}")
-            image = face_recognition.load_image_file(face_image.file)
-            encodings = face_recognition.face_encodings(image)
-            if not encodings:
-                raise serializers.ValidationError("Nenhum rosto detectado na imagem.")
-            embedding = encodings[0]
-            logger.info(f"Embedding gerado com sucesso: {embedding.tolist()}")
-        except Exception as e:
-            logger.error(f"Erro ao processar imagem facial: {str(e)}")
-            raise serializers.ValidationError(f"Erro ao processar imagem: {str(e)}")
+            embedding = process_face_image_and_get_embedding(face_image)
+        except ValueError as e:
+            raise serializers.ValidationError(str(e))
 
         user = CustomUser.objects.create_user(
             username=validated_data['username'],
@@ -43,7 +36,8 @@ class RegisterSerializer(serializers.ModelSerializer):
             password=validated_data['password'],
             phone_number=validated_data['phone_number'],
             cpf=validated_data['cpf'],
-            facial_embedding=embedding.tolist()
+            facial_embedding=embedding.tolist(),
+            role=validated_data.get('role', UserRole.USER.value)  
         )
         return user
 
@@ -118,4 +112,9 @@ class AttendanceUsersSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'cpf', 'phone_number']
+        fields = ['id', 'username', 'email', 'cpf', 'phone_number']
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomUser
+        fields = ['id', 'username', 'email', 'role', 'phone_number', 'cpf']
