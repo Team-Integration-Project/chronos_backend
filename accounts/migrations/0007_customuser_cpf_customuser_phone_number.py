@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('accounts', '0006_auto_20250707_0050'),
+        ('accounts', '0005_alter_passwordresettoken_is_used_attendance_and_more'),
     ]
 
     operations = [
