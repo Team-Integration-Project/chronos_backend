@@ -48,19 +48,24 @@ class JustificationListCreateView(ListCreateAPIView):
                 'reason': justification.reason or 'Sem motivo',
                 'date': justification.date.strftime('%Y-%m-%d') if justification.date else justification.created_at.date().strftime('%Y-%m-%d'),
                 'created_at': justification.created_at.isoformat(),
-                
                 'approval': approved_status,
                 'approved': approved_status,
                 'status': status_text,
                 'approved_by': approval.reviewed_by.username if approval and approval.reviewed_by else None,
                 'approved_at': approval.reviewed_at.isoformat() if approval and approval.reviewed_at else None,
+                # Dados do anexo
+                'attachment': {
+                    'name': justification.attachment.name.split('/')[-1] if justification.attachment else None,
+                    'size': justification.attachment.size if justification.attachment else None,
+                    'type': justification.attachment.name.split('.')[-1] if justification.attachment else None,
+                    'url': request.build_absolute_uri(justification.attachment.url) if justification.attachment else None
+                } if justification.attachment else None
             }
             data.append(item)
             
             logger.info(f"Justification {justification.id}: approved={approved_status}, status={status_text}")
         
         return Response(data, status=status.HTTP_200_OK)
-
 
 class JustificationApprovalView(APIView):
     permission_classes = [AdminPermission]
@@ -104,7 +109,6 @@ class JustificationApprovalView(APIView):
                 'reason': justification.reason or 'Sem motivo',
                 'date': justification.date.strftime('%Y-%m-%d') if justification.date else justification.created_at.date().strftime('%Y-%m-%d'),
                 'created_at': justification.created_at.isoformat(),
-                
                 'approval': approval_obj.approved,
                 'approved': approval_obj.approved,
                 'status': status_text,

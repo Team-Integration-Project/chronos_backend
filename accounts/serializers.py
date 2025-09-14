@@ -91,6 +91,18 @@ class JustificationSerializer(serializers.ModelSerializer):
             'date': {'required': True},
         }
 
+class JustificationSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = Justification
+        fields = ['id', 'user', 'date', 'reason', 'created_at', 'attachment']  # Inclui o campo 'attachment'
+        read_only_fields = ['id', 'created_at', 'user']
+        extra_kwargs = {
+            'reason': {'required': True, 'min_length': 5},
+            'date': {'required': True},
+        }
+
 class JustificationApprovalSerializer(serializers.ModelSerializer):
     justification_detail = JustificationSerializer(source='justification', read_only=True)
     reviewed_by = serializers.StringRelatedField(read_only=True)

@@ -34,7 +34,7 @@ class CustomUser(AbstractUser):
     facial_embedding = VectorField(dimensions=128, null=True, blank=True)
     role = models.CharField(max_length=10, choices=[(role.value, role.value) for role in UserRole], default=UserRole.USER.value)
     phone_number = models.CharField(max_length=15, blank=True, null=True)
-    cpf = models.CharField(max_length=14, blank=True, null= True)
+    cpf = models.CharField(max_length=14, blank=True, null=True)
 
     def __str__(self):
         return self.username
@@ -71,6 +71,7 @@ class Justification(models.Model):
     date = models.DateField(default=timezone.now)
     reason = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
+    attachment = models.FileField(upload_to='justifications/', null=True, blank=True)  # Campo para anexo
 
     def __str__(self):
         return f"{self.user.username if self.user else 'Desconhecido'} - Justificativa em {self.date}"
