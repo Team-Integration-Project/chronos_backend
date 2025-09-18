@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.exceptions import PermissionDenied
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -24,48 +25,84 @@ class JustificationListCreateView(ListCreateAPIView):
         return Justification.objects.filter(user=user).order_by('-created_at')
 
     def perform_create(self, serializer):
+        # Validar anexo antes de salvar
+        attachment = self.request.FILES.get('attachment')
+        if attachment:
+            try:
+                # Verificar se o arquivo pode ser lido
+                attachment.seek(0)
+                logger.info(f"Anexo recebido: {attachment.name}, tamanho: {attachment.size}")
+            except Exception as e:
+                logger.error(f"Erro ao processar anexo: {str(e)}")
+                raise ValidationError({'attachment': 'Erro ao processar o anexo'})
         serializer.save(user=self.request.user)
-    
+        logger.info(f"Justificativa criada para usuário {self.request.user.username}, ID: {serializer.instance.id}")
+
     def list(self, request, *args, **kwargs):
         """Customizar a resposta da listagem para incluir dados de aprovação"""
-        queryset = self.get_queryset()
-        
-        data = []
-        for justification in queryset:
-            approval = JustificationApproval.objects.filter(justification=justification).first()
+        try:
+            queryset = self.get_queryset()
+            data = []
+            for justification in queryset:
+                approval = JustificationApproval.objects.filter(justification=justification).first()
+                
+                if approval is not None:
+                    status_text = 'aprovada' if approval.approved else 'recusada'
+                    approved_status = approval.approved
+                else:
+                    status_text = 'pendente'
+                    approved_status = None
+                
+                attachment_data = None
+                if justification.attachment:
+                    try:
+                        # Verificar se o arquivo existe antes de acessar size e url
+                        if os.path.exists(justification.attachment.path):
+                            attachment_data = {
+                                'name': justification.attachment.name.split('/')[-1],
+                                'size': justification.attachment.size,
+                                'type': justification.attachment.name.split('.')[-1] if '.' in justification.attachment.name else None,
+                                'url': request.build_absolute_uri(justification.attachment.url)
+                            }
+                        else:
+                            logger.warning(f"Anexo não encontrado: {justification.attachment.path}")
+                            attachment_data = {
+                                'name': justification.attachment.name.split('/')[-1],
+                                'size': None,
+                                'type': justification.attachment.name.split('.')[-1] if '.' in justification.attachment.name else None,
+                                'url': None
+                            }
+                    except Exception as e:
+                        logger.error(f"Erro ao processar anexo da justificativa {justification.id}: {str(e)}")
+                        attachment_data = {
+                            'name': justification.attachment.name.split('/')[-1],
+                            'size': None,
+                            'type': justification.attachment.name.split('.')[-1] if '.' in justification.attachment.name else None,
+                            'url': None
+                        }
+                
+                item = {
+                    'id': justification.id,
+                    'user': justification.user.username if justification.user else 'Desconhecido',
+                    'employee': justification.user.get_full_name() if justification.user else justification.user.username if justification.user else 'Desconhecido',
+                    'reason': justification.reason or 'Sem motivo',
+                    'date': justification.date.strftime('%Y-%m-%d') if justification.date else justification.created_at.date().strftime('%Y-%m-%d'),
+                    'created_at': justification.created_at.isoformat(),
+                    'approval': approved_status,
+                    'approved': approved_status,
+                    'status': status_text,
+                    'approved_by': approval.reviewed_by.username if approval and approval.reviewed_by else None,
+                    'approved_at': approval.reviewed_at.isoformat() if approval and approval.reviewed_at else None,
+                    'attachment': attachment_data
+                }
+                data.append(item)
+                
+                logger.info(f"Justificativa {justification.id}: approved={approved_status}, status={status_text}, anexo={'presente' if attachment_data else 'ausente'}")
             
-            if approval is not None:
-                status_text = 'aprovada' if approval.approved else 'recusada'
-                approved_status = approval.approved
-            else:
-                status_text = 'pendente'
-                approved_status = None
-            
-            item = {
-                'id': justification.id,
-                'user': justification.user.username if justification.user else 'Desconhecido',
-                'employee': justification.user.get_full_name() if justification.user else justification.user.username if justification.user else 'Desconhecido',
-                'reason': justification.reason or 'Sem motivo',
-                'date': justification.date.strftime('%Y-%m-%d') if justification.date else justification.created_at.date().strftime('%Y-%m-%d'),
-                'created_at': justification.created_at.isoformat(),
-                'approval': approved_status,
-                'approved': approved_status,
-                'status': status_text,
-                'approved_by': approval.reviewed_by.username if approval and approval.reviewed_by else None,
-                'approved_at': approval.reviewed_at.isoformat() if approval and approval.reviewed_at else None,
-                # Dados do anexo
-                'attachment': {
-                    'name': justification.attachment.name.split('/')[-1] if justification.attachment else None,
-                    'size': justification.attachment.size if justification.attachment else None,
-                    'type': justification.attachment.name.split('.')[-1] if justification.attachment else None,
-                    'url': request.build_absolute_uri(justification.attachment.url) if justification.attachment else None
-                } if justification.attachment else None
-            }
-            data.append(item)
-            
-            logger.info(f"Justification {justification.id}: approved={approved_status}, status={status_text}")
-        
-        return Response(data, status=status.HTTP_200_OK)
+            return Response(data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Erro ao listar justificativas: {str(e)}")
+            return Response({'error': f'Erro interno: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class JustificationApprovalView(APIView):
     permission_classes = [AdminPermission]
@@ -79,7 +116,7 @@ class JustificationApprovalView(APIView):
             
             final_approval = approved if approved is not None else approval
             
-            logger.info(f"Processando aprovação/reprovação para justification {justification_id}: approved={approved}, approval={approval}, final={final_approval}")
+            logger.info(f"Processando aprovação/reprovação para justificativa {justification_id}: approved={approved}, approval={approval}, final={final_approval}")
             
             if final_approval is None:
                 return Response({'error': 'Campo approved ou approval é obrigatório'}, status=status.HTTP_400_BAD_REQUEST)
