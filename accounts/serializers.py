@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import CustomUser, Attendance, Justification, JustificationApproval, FacialRecognitionFailure, UserRole  
+from .models import CustomUser, Attendance, Justification, JustificationApproval, FacialRecognitionFailure, UserRole
 from django.core.files.uploadedfile import InMemoryUploadedFile
 import logging
 from .services import process_face_image_and_get_embedding
@@ -15,8 +15,8 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'email', 'password', 'confirm_password', 'phone_number', 'cpf', 'face_image', 'role']  
-    
+        fields = ['id', 'username', 'email', 'password', 'confirm_password', 'phone_number', 'cpf', 'face_image', 'role']
+
     def validate(self, attrs):
         if attrs['password'] != attrs['confirm_password']:
             raise serializers.ValidationError({"password": "As senhas não coincidem."})
@@ -24,7 +24,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         face_image = validated_data.pop('face_image')
-        validated_data.pop('confirm_password')  
+        validated_data.pop('confirm_password')
         try:
             embedding = process_face_image_and_get_embedding(face_image)
         except ValueError as e:
@@ -37,7 +37,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             phone_number=validated_data['phone_number'],
             cpf=validated_data['cpf'],
             facial_embedding=embedding.tolist(),
-            role=validated_data.get('role', UserRole.USER.value)  
+            role=validated_data.get('role', UserRole.USER.value)
         )
         return user
 
@@ -54,12 +54,14 @@ class ResetPasswordSerializer(serializers.Serializer):
 
 class AttendanceSerializer(serializers.ModelSerializer):
     user = serializers.PrimaryKeyRelatedField(queryset=CustomUser.objects.all(), write_only=True)
-    user_detail = serializers.StringRelatedField(source='user', read_only=True)  
+    user_detail = serializers.StringRelatedField(source='user', read_only=True)
+    latitude = serializers.FloatField(required=True, allow_null=False)
+    longitude = serializers.FloatField(required=True, allow_null=False)
 
     class Meta:
         model = Attendance
-        fields = ['id', 'user', 'user_detail', 'point_type', 'data_hora', 'foto_path', 'is_synced']
-        read_only_fields = ['id', 'data_hora', 'foto_path', 'user_detail']
+        fields = ['id', 'user', 'user_detail', 'point_type', 'data_hora', 'foto_path', 'is_synced', 'latitude', 'longitude', 'is_valid_location']
+        read_only_fields = ['id', 'data_hora', 'foto_path', 'user_detail', 'is_valid_location']
         extra_kwargs = {
             'point_type': {'required': True, 'validators': []},
         }
@@ -70,8 +72,21 @@ class AttendanceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(f"Tipo de ponto deve ser um dos seguintes: {', '.join(valid_types)}")
         return value
 
+    def validate(self, attrs):
+        latitude = attrs.get('latitude')
+        longitude = attrs.get('longitude')
+        if latitude is not None and longitude is not None:
+            try:
+                latitude = float(latitude)
+                longitude = float(longitude)
+                if not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
+                    raise serializers.ValidationError("Latitude deve estar entre -90 e 90, e longitude entre -180 e 180.")
+            except (TypeError, ValueError):
+                raise serializers.ValidationError("Latitude e longitude devem ser números válidos.")
+        return attrs
+
     def create(self, validated_data):
-        user = validated_data.pop('user')  
+        user = validated_data.pop('user')
         if isinstance(user, CustomUser):
             user_id = user.id
         else:
@@ -84,19 +99,7 @@ class JustificationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Justification
-        fields = ['id', 'user', 'date', 'reason', 'created_at']
-        read_only_fields = ['id', 'created_at', 'user']
-        extra_kwargs = {
-            'reason': {'required': True, 'min_length': 5},
-            'date': {'required': True},
-        }
-
-class JustificationSerializer(serializers.ModelSerializer):
-    user = serializers.StringRelatedField(read_only=True)
-
-    class Meta:
-        model = Justification
-        fields = ['id', 'user', 'date', 'reason', 'created_at', 'attachment']  # Inclui o campo 'attachment'
+        fields = ['id', 'user', 'date', 'reason', 'created_at', 'attachment']
         read_only_fields = ['id', 'created_at', 'user']
         extra_kwargs = {
             'reason': {'required': True, 'min_length': 5},

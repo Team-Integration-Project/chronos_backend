@@ -106,6 +106,12 @@ REST_FRAMEWORK = {
     ),
 }
 
+WORKPLACE_LOCATION = {
+    "latitude": -23.550520,  # Exemplo: São Paulo
+    "longitude": -46.633308,
+    "allowed_radius_meters": 100
+}
+
 
 
 LANGUAGE_CODE = 'pt-br'

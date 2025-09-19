@@ -62,30 +62,37 @@ class Attendance(models.Model):
     data_hora = models.DateTimeField(auto_now_add=True)
     foto_path = models.ImageField(upload_to='attendance/photos/', null=True, blank=True)
     is_synced = models.BooleanField(default=False)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    is_valid_location = models.BooleanField(default=False)
+    distance_from_workplace_meters = models.FloatField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.user.username} - {self.point_type} em {self.data_hora}"
+
+    class Meta:
+        db_table = 'accounts_attendance'
 
 class Justification(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, null=True, blank=True)
     date = models.DateField(default=timezone.now)
     reason = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
-    attachment = models.FileField(upload_to='justifications/', null=True, blank=True)  # Campo para anexo
+    attachment = models.FileField(upload_to='justifications/', null=True, blank=True)
 
     def __str__(self):
         return f"{self.user.username if self.user else 'Desconhecido'} - Justificativa em {self.date}"
 
 class JustificationApproval(models.Model):
     justification = models.OneToOneField(Justification, on_delete=models.CASCADE, related_name='approval')
-    approved = models.BooleanField(null=True)  
+    approved = models.BooleanField(null=True)
     reviewed_by = models.ForeignKey(CustomUser, null=True, blank=True, on_delete=models.SET_NULL, related_name='reviewed_justifications')
     reviewed_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         status = "Aprovada" if self.approved else "Reprovada" if self.approved is False else "Pendente"
         return f"{self.justification} - {status}"
-    
+
 class FacialRecognitionFailure(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)
     reason = models.TextField()
