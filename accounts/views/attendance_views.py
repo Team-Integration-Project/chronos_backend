@@ -27,6 +27,9 @@ class MarkAttendanceView(APIView):
         face_image = request.FILES.get('face_image')
         latitude = request.data.get('latitude')
         longitude = request.data.get('longitude')
+        altitude = request.data.get('altitude')
+        accuracy = request.data.get('accuracy') 
+        place_name = request.data.get('place_name', '') 
         point_type = request.data.get('point_type', 'entrada')
 
         if not face_image or not hasattr(face_image, 'name'):
@@ -71,45 +74,52 @@ class MarkAttendanceView(APIView):
         if Attendance.objects.filter(user=matched_user, point_type=point_type, data_hora__date=current_date).exists():
             return Response({'error': 'Tipo de ponto já registrado hoje'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validar localização
         is_valid_location = False
         distance = None
-        place_name = "Local desconhecido"
+        calculated_place_name = "Local desconhecido"
         try:
             latitude = float(latitude)
             longitude = float(longitude)
+            altitude = float(altitude) if altitude and altitude != 'null' else None
+            accuracy = float(accuracy) if accuracy and accuracy != 'null' else None
+            
             workplace = settings.WORKPLACE_LOCATION
             user_location = (latitude, longitude)
             work_location = (workplace["latitude"], workplace["longitude"])
             distance = geodesic(user_location, work_location).meters
             is_valid_location = distance <= workplace["allowed_radius_meters"]
 
-            # Geocodificação reversa
-            try:
-                geolocator = Nominatim(user_agent="chronos_backend")
-                location = geolocator.reverse((latitude, longitude), language="pt-BR", timeout=10)
-                if location and location.address:
-                    # Extrair componentes específicos do endereço
-                    address_components = location.raw.get('address', {})
-                    street = address_components.get('road', '') or address_components.get('highway', '')
-                    neighbourhood = address_components.get('suburb', '') or address_components.get('neighbourhood', '')
-                    city = address_components.get('city', '') or address_components.get('town', '') or address_components.get('village', '')
-                    state = address_components.get('state', '')
-                    place_name = f"{street}, {neighbourhood}, {city}-{state}".strip(', ')
-                    if not place_name or place_name == '-':
-                        place_name = f"Lat: {latitude:.6f}, Lon: {longitude:.6f}"  # Fallback para coordenadas
-                else:
-                    place_name = f"Lat: {latitude:.6f}, Lon: {longitude:.6f}"  # Fallback para coordenadas
-                logger.info(f"Nome do local obtido: {place_name}")
-            except Exception as e:
-                logger.error(f"Erro no geocoding reverso: {str(e)}")
-                place_name = f"Lat: {latitude:.6f}, Lon: {longitude:.6f}"  # Fallback para coordenadas
+            if not place_name or place_name.strip() == '':
+                try:
+                    geolocator = Nominatim(user_agent="chronos_backend")
+                    location = geolocator.reverse((latitude, longitude), language="pt-BR", timeout=10)
+                    if location and location.address:
+                        address_components = location.raw.get('address', {})
+                        street = address_components.get('road', '') or address_components.get('highway', '')
+                        neighbourhood = address_components.get('suburb', '') or address_components.get('neighbourhood', '')
+                        city = address_components.get('city', '') or address_components.get('town', '') or address_components.get('village', '')
+                        state = address_components.get('state', '')
+                        calculated_place_name = f"{street}, {neighbourhood}, {city}-{state}".strip(', ')
+                        if not calculated_place_name or calculated_place_name == '-':
+                            calculated_place_name = f"Lat: {latitude:.6f}, Lon: {longitude:.6f}" 
+                    else:
+                        calculated_place_name = f"Lat: {latitude:.6f}, Lon: {longitude:.6f}"
+                    logger.info(f"Nome do local calculado: {calculated_place_name}")
+                except Exception as e:
+                    logger.error(f"Erro no geocoding reverso: {str(e)}")
+                    calculated_place_name = f"Lat: {latitude:.6f}, Lon: {longitude:.6f}" 
+                
+                final_place_name = calculated_place_name
+            else:
+                final_place_name = place_name
+                logger.info(f"Usando place_name fornecido: {final_place_name}")
+                
         except (TypeError, ValueError) as e:
             logger.error(f"Erro na validação de localização: {str(e)}")
             return Response({'error': 'Latitude e longitude devem ser números válidos.'}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Erro inesperado na validação de localização: {str(e)}")
-            place_name = f"Lat: {latitude:.6f}, Lon: {longitude:.6f}"  # Fallback para coordenadas
+            final_place_name = f"Lat: {latitude:.6f}, Lon: {longitude:.6f}"  
 
         try:
             full_path = save_attendance_photo(face_image)
@@ -125,9 +135,13 @@ class MarkAttendanceView(APIView):
             'is_synced': False,
             'latitude': latitude,
             'longitude': longitude,
+            'altitude': altitude, 
+            'accuracy': accuracy,  
+            'place_name': final_place_name,  
             'is_valid_location': is_valid_location,
             'distance_from_workplace_meters': distance
         }
+        
         serializer = AttendanceSerializer(data=attendance_data)
         if serializer.is_valid():
             serializer.save()
@@ -143,9 +157,11 @@ class MarkAttendanceView(APIView):
                 'last_records': AttendanceSerializer(last_records, many=True).data,
                 'latitude': latitude,
                 'longitude': longitude,
+                'altitude': altitude,  
+                'accuracy': accuracy, 
                 'is_valid_location': is_valid_location,
                 'distance_from_workplace_meters': round(distance, 2) if distance is not None else None,
-                'place_name': place_name
+                'place_name': final_place_name 
             }
             logger.info(f"Resposta enviada: {response_data}")
             return Response(response_data, status=status.HTTP_200_OK)

@@ -52,16 +52,29 @@ class ResetPasswordSerializer(serializers.Serializer):
     token = serializers.CharField(max_length=255)
     new_password = serializers.CharField(min_length=6, write_only=True)
 
+from rest_framework import serializers
+from accounts.models import Attendance, Justification, CustomUser
+
 class AttendanceSerializer(serializers.ModelSerializer):
     user = serializers.PrimaryKeyRelatedField(queryset=CustomUser.objects.all(), write_only=True)
     user_detail = serializers.StringRelatedField(source='user', read_only=True)
     latitude = serializers.FloatField(required=True, allow_null=False)
     longitude = serializers.FloatField(required=True, allow_null=False)
-
+    altitude = serializers.FloatField(required=False, allow_null=True) 
+    accuracy = serializers.FloatField(required=False, allow_null=True) 
+    place_name = serializers.CharField(required=False, allow_null=True, allow_blank=True)  
+    
     class Meta:
         model = Attendance
-        fields = ['id', 'user', 'user_detail', 'point_type', 'data_hora', 'foto_path', 'is_synced', 'latitude', 'longitude', 'is_valid_location']
-        read_only_fields = ['id', 'data_hora', 'foto_path', 'user_detail', 'is_valid_location']
+        fields = [
+            'id', 'user', 'user_detail', 'point_type', 'data_hora', 'foto_path', 
+            'is_synced', 'latitude', 'longitude', 'altitude', 'accuracy', 
+            'place_name', 'is_valid_location', 'distance_from_workplace_meters'
+        ]
+        read_only_fields = [
+            'id', 'data_hora', 'foto_path', 'user_detail', 
+            'is_valid_location', 'distance_from_workplace_meters'
+        ]
         extra_kwargs = {
             'point_type': {'required': True, 'validators': []},
         }
@@ -75,6 +88,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         latitude = attrs.get('latitude')
         longitude = attrs.get('longitude')
+        
         if latitude is not None and longitude is not None:
             try:
                 latitude = float(latitude)
@@ -83,6 +97,25 @@ class AttendanceSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError("Latitude deve estar entre -90 e 90, e longitude entre -180 e 180.")
             except (TypeError, ValueError):
                 raise serializers.ValidationError("Latitude e longitude devem ser números válidos.")
+        
+        altitude = attrs.get('altitude')
+        if altitude is not None:
+            try:
+                altitude = float(altitude)
+                if altitude < -500 or altitude > 10000:  
+                    raise serializers.ValidationError("Altitude deve estar entre -500 e 10000 metros.")
+            except (TypeError, ValueError):
+                raise serializers.ValidationError("Altitude deve ser um número válido.")
+        
+        accuracy = attrs.get('accuracy')
+        if accuracy is not None:
+            try:
+                accuracy = float(accuracy)
+                if accuracy < 0:
+                    raise serializers.ValidationError("Precisão (accuracy) deve ser um valor positivo.")
+            except (TypeError, ValueError):
+                raise serializers.ValidationError("Precisão (accuracy) deve ser um número válido.")
+        
         return attrs
 
     def create(self, validated_data):

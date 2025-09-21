@@ -41,6 +41,26 @@ def group_attendances_by_date(attendances):
         
         for att in atts:
             time_str = att.data_hora.astimezone(timezone.get_current_timezone()).strftime('%H:%M')
+            
+            location_key = f'location_{att.point_type}'
+            day_data[location_key] = {
+                'latitude': att.latitude,
+                'longitude': att.longitude,
+                'altitude': att.altitude,
+                'accuracy': att.accuracy,
+                'is_valid_location': att.is_valid_location,
+                'distance_from_workplace_meters': att.distance_from_workplace_meters,
+                'place_name': att.place_name,
+            }
+            
+            day_data[f'location_{att.point_type}_latitude'] = att.latitude
+            day_data[f'location_{att.point_type}_longitude'] = att.longitude
+            day_data[f'location_{att.point_type}_altitude'] = att.altitude
+            day_data[f'location_{att.point_type}_accuracy'] = att.accuracy
+            day_data[f'location_{att.point_type}_is_valid'] = att.is_valid_location
+            day_data[f'location_{att.point_type}_distance'] = att.distance_from_workplace_meters
+            day_data[f'location_{att.point_type}_place_name'] = att.place_name
+            
             if att.point_type == 'entrada':
                 day_data['entrada'] = time_str
             elif att.point_type == 'almoco':
@@ -51,7 +71,7 @@ def group_attendances_by_date(attendances):
         
         day_data.setdefault('entrada', '-')
         day_data.setdefault('entrada_almoco', '-')
-        day_data.setdefault('saida_almoco', '-')
+        day_data.setdefault('saida_almaco', '-')
         day_data.setdefault('saida', '-')
         
         day_data['status'] = calculate_day_status(day_data)

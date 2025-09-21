@@ -64,6 +64,9 @@ class Attendance(models.Model):
     is_synced = models.BooleanField(default=False)
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
+    altitude = models.FloatField(null=True, blank=True)  
+    accuracy = models.FloatField(null=True, blank=True)  
+    place_name = models.CharField(max_length=500, blank=True, null=True) 
     is_valid_location = models.BooleanField(default=False)
     distance_from_workplace_meters = models.FloatField(null=True, blank=True)
 
