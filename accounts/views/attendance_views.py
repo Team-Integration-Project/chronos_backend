@@ -8,7 +8,7 @@ from ..serializers import AttendanceSerializer, JustificationSerializer, Attenda
 from accounts.models import Attendance, Justification, JustificationApproval, CustomUser
 from django.utils import timezone
 import logging
-from ..services import filter_attendances_by_period, group_attendances_by_date, calculate_day_status, calculate_stats, process_face_image_and_get_embedding, find_matching_user, save_attendance_photo
+from ..services import filter_attendances_by_period, group_attendances_by_date, calculate_stats, process_face_image_and_get_embedding, find_matching_user, save_attendance_photo
 from collections import defaultdict
 from datetime import datetime, timedelta
 from geopy.distance import geodesic
@@ -183,19 +183,20 @@ class AttendanceListView(ListAPIView):
             return Attendance.objects.all().order_by('-data_hora')
         return Attendance.objects.filter(user=user).order_by('-data_hora')
 
+
 class UserAttendanceDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, user_id):
         try:
-            user = User.objects.get(id=user_id)
+            user = CustomUser.objects.get(id=user_id)
             period = request.query_params.get('period', 'mes').lower()
             start_date_str = request.query_params.get('start_date')
             end_date_str = request.query_params.get('end_date')
 
+            # Determinar intervalo de datas
             start_date = None
             end_date = None
-
             if start_date_str and end_date_str:
                 try:
                     start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
@@ -229,39 +230,30 @@ class UserAttendanceDetailView(APIView):
 
             logger.info(f"UserAttendanceDetailView: Usuário {user.username}, Período {period}, Data início: {start_date}, Data fim: {end_date}")
 
+            # Filtrar atendimentos
             attendances_display = filter_attendances_by_period(user, period, start_date=start_date, end_date=end_date)
-            logger.info(f"UserAttendanceDetailView: Usuário {user.username}, Atendimentos filtrados: {attendances_display.count()}")
             attendance_count = attendances_display.count()
 
-            attendance_data = group_attendances_by_date(attendances_display)
-            recent_activities = defaultdict(list)
-            for att in attendances_display:
-                date_str = att.data_hora.astimezone(timezone.get_current_timezone()).strftime('%d/%m/%Y')
-                recent_activities[date_str].append({
-                    'id': att.id,
-                    'point_type': att.point_type,
-                    'data_hora': att.data_hora.isoformat(),
-                    'foto_path': att.foto_path.url if att.foto_path else None,
-                    'latitude': att.latitude,
-                    'longitude': att.longitude,
-                    'is_valid_location': att.is_valid_location,
-                })
+            # Agrupar atendimentos por data e calcular status
+            attendance_data = group_attendances_by_date(attendances_display, user, start_date, end_date)
 
-            logger.info(f"UserAttendanceDetailView: `recent_activities` (para exibição na tabela): {dict(recent_activities)}")
-
-            justifications = Justification.objects.filter(user=user, date__gte=start_date, date__lte=end_date)
-            justification_map = {}
-            for j in justifications:
-                date_str = j.date.strftime('%d/%m/%Y') if j.date else timezone.now().date().strftime('%d/%m/%Y')
-                justification_map[date_str] = j.reason
-
-            stats = calculate_stats(user, attendance_data, justifications.count(), attendance_count)
+            # Calcular estatísticas
+            stats = calculate_stats(user, attendance_data, Justification.objects.filter(user=user, date__gte=start_date, date__lte=end_date).count(), attendance_count)
             stats['cpf'] = user.cpf if hasattr(user, 'cpf') and user.cpf else 'N/A'
             stats['role'] = user.role if hasattr(user, 'role') and user.role else 'N/A'
             stats['period_start'] = start_date.strftime('%d/%m/%Y') if start_date else None
             stats['period_end'] = end_date.strftime('%d/%m/%Y') if end_date else None
 
-            logger.info(f"UserAttendanceDetailView: Stats calculadas: {stats}")
+            # Adicionar contagem de status
+            status_counts = {
+                'presente': 0,
+                'justificado': 0,
+                'falta': 0,
+                'feriado_domingo': 0
+            }
+            for day in attendance_data:
+                status_counts[day['status']] += 1
+            stats['status_counts'] = status_counts
 
             return Response({
                 'user': user.username,
@@ -277,13 +269,13 @@ class UserAttendanceDetailView(APIView):
                 }
             }, status=status.HTTP_200_OK)
 
-        except User.DoesNotExist:
+        except CustomUser.DoesNotExist:
             logger.error(f"Usuário com ID {user_id} não encontrado")
             return Response({'error': 'Usuário não encontrado'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Erro ao buscar atendimentos do usuário {user_id}: {str(e)}")
             return Response({'error': f'Erro interno: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
 class MyAttendanceReportView(APIView):
     permission_classes = [IsAuthenticated]
 

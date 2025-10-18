@@ -103,3 +103,16 @@ class FacialRecognitionFailure(models.Model):
 
     def __str__(self):
         return f"{self.user.username if self.user else 'Desconhecido'} - {self.reason[:20]}"
+    
+class Feriado(models.Model):
+    nome = models.CharField(max_length=100)
+    data = models.DateField(unique=True)  # Evita duplicatas
+    observacao = models.TextField(blank=True)
+    criado_em = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        verbose_name_plural = "Feriados"
+        ordering = ['data']
+
+    def __str__(self):
+        return f"{self.nome} ({self.data})"

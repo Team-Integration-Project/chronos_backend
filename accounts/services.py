@@ -1,13 +1,14 @@
 from django.utils import timezone
 from collections import defaultdict
-from datetime import datetime, timedelta
-from accounts.models import Attendance, Justification
+from datetime import datetime, timedelta, date
+from accounts.models import Attendance, Justification, JustificationApproval, Feriado
 import face_recognition
 import numpy as np
 import logging
 from PIL import Image
 import os
 from django.core.files.storage import default_storage
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,19 +30,68 @@ def filter_attendances_by_period(user, period, start_date=None, end_date=None):
         return attendances.filter(data_hora__year=today.year)
     return attendances
 
-def group_attendances_by_date(attendances):
+def calculate_day_status(colaborador, data: date) -> dict:
+    """
+    Calcula o status de presença para um colaborador em uma data específica.
+    Retorna: dict com 'status' (presente, justificado, falta, feriado_domingo) e 'display' (com emoji/capitalizado).
+    """
+    # Passo 1: Verificar se é domingo ou feriado
+    if data.weekday() == 6:  # 6 = Domingo
+        return {'status': 'feriado_domingo', 'display': '⚪ Feriado/Domingo'}
+    
+    if Feriado.objects.filter(data=data).exists():
+        return {'status': 'feriado_domingo', 'display': '⚪ Feriado/Domingo'}
+    
+    # Passo 2: Verificar se há registro de ponto (qualquer tipo: entrada, almoço, saída)
+    if Attendance.objects.filter(user=colaborador, data_hora__date=data).exists():
+        return {'status': 'presente', 'display': '🟢 Presente'}
+    
+    # Passo 3: Verificar se há justificativa aprovada para o dia
+    justificativa = Justification.objects.filter(
+        user=colaborador,
+        date=data
+    ).first()
+    if justificativa and JustificationApproval.objects.filter(
+        justification=justificativa,
+        approved=True
+    ).exists():
+        return {'status': 'justificado', 'display': '🟡 Justificado'}
+    
+    # Passo 4: Caso contrário, é falta
+    return {'status': 'falta', 'display': '🔴 Falta'}
+
+def group_attendances_by_date(attendances, user, start_date, end_date):
+    """
+    Agrupa atendimentos por data e calcula status para cada dia no intervalo.
+    Parâmetros:
+        attendances: QuerySet de Attendance
+        user: Instância de CustomUser
+        start_date: Data inicial do intervalo
+        end_date: Data final do intervalo
+    Retorna: Lista de dicionários com dados por dia, incluindo status.
+    """
     attendance_dict = defaultdict(list)
     for attendance in attendances:
         date_str = attendance.data_hora.astimezone(timezone.get_current_timezone()).strftime('%d/%m/%Y')
         attendance_dict[date_str].append(attendance)
 
     attendance_data = []
-    for date_str, atts in attendance_dict.items():
-        day_data = {'id': str(atts[0].id), 'date': date_str}
-        
-        for att in atts:
+    current_date = start_date
+    while current_date <= end_date:
+        date_str = current_date.strftime('%d/%m/%Y')
+        day_data = {
+            'id': str(attendance_dict[date_str][0].id) if date_str in attendance_dict else f"no_attendance_{date_str}",
+            'date': date_str,
+            'entrada': '-',
+            'entrada_almoco': '-',
+            'saida_almoco': '-',
+            'saida': '-',
+            'observacao': ''
+        }
+
+        # Preencher dados de atendimentos, se existirem
+        for att in attendance_dict.get(date_str, []):
             time_str = att.data_hora.astimezone(timezone.get_current_timezone()).strftime('%H:%M')
-            
             location_key = f'location_{att.point_type}'
             day_data[location_key] = {
                 'latitude': att.latitude,
@@ -52,7 +102,6 @@ def group_attendances_by_date(attendances):
                 'distance_from_workplace_meters': att.distance_from_workplace_meters,
                 'place_name': att.place_name,
             }
-            
             day_data[f'location_{att.point_type}_latitude'] = att.latitude
             day_data[f'location_{att.point_type}_longitude'] = att.longitude
             day_data[f'location_{att.point_type}_altitude'] = att.altitude
@@ -68,82 +117,27 @@ def group_attendances_by_date(attendances):
                 day_data['saida_almoco'] = time_str
             elif att.point_type == 'saida':
                 day_data['saida'] = time_str
-        
-        day_data.setdefault('entrada', '-')
-        day_data.setdefault('entrada_almoco', '-')
-        day_data.setdefault('saida_almaco', '-')
-        day_data.setdefault('saida', '-')
-        
-        day_data['status'] = calculate_day_status(day_data)
-        day_data['observacao'] = ''
+
+        # Calcular status do dia
+        status_info = calculate_day_status(user, current_date)
+        day_data['status'] = status_info['status']
+        day_data['status_display'] = status_info['display']
+
         attendance_data.append(day_data)
+        current_date += timedelta(days=1)
 
     return attendance_data
-
-def calculate_day_status(day_data):
-    entrada = day_data.get('entrada', '-')
-    saida = day_data.get('saida', '-')
-    
-    if entrada == '-':
-        return 'Falta'
-    
-    if saida == '-':
-        return 'Pendente'
-    
-    try:
-        entrada_time = datetime.strptime(entrada, '%H:%M').time()
-        horario_limite = datetime.strptime('07:00', '%H:%M').time()
-        
-        if entrada_time > horario_limite:
-            return 'Atraso'
-    except ValueError:
-        pass
-    
-    return 'Aprovado'
 
 def calculate_stats(user, attendance_data, total_justificativas, total_pontos_registrados):
     total_hours = 0
     total_faltas = 0
-    total_atrasos = 0
-    
-    first_attendance_date = None
-    if attendance_data:
-        sorted_attendance = sorted(attendance_data, key=lambda x: datetime.strptime(x['date'], '%d/%m/%Y'))
-        
-        for day in sorted_attendance:
-            if (day.get('entrada', '-') != '-' or 
-                day.get('saida', '-') != '-' or 
-                day.get('entrada_almoco', '-') != '-'):
-                first_attendance_date = datetime.strptime(day['date'], '%d/%m/%Y').date()
-                break
-    
-    if not first_attendance_date:
-        return {
-            'dias_trabalhados': 0,
-            'total_pontos_registrados': total_pontos_registrados,
-            'total_justificativas': total_justificativas,
-            'horas_trabalhadas_total': 0,
-            'total_faltas': 0,
-            'total_atrasos': 0,
-        }
-    
-    print(f"Primeira data com ponto batido: {first_attendance_date}")
-    
-    
     dias_com_presenca = 0
-    total_faltas = 0
 
     for day in attendance_data:
         status = day.get('status', '')
-        day_date = datetime.strptime(day['date'], '%d/%m/%Y').date()
-        
-        if day_date.weekday() < 5 and status == 'Falta':
+        if status == 'falta':
             total_faltas += 1
-        
-        if status == 'Atraso':
-            total_atrasos += 1
-        
-        if status in ['Aprovado', 'Atraso']:
+        if status == 'presente':
             dias_com_presenca += 1
             try:
                 if day['entrada'] != '-' and day['saida'] != '-':
@@ -160,7 +154,7 @@ def calculate_stats(user, attendance_data, total_justificativas, total_pontos_re
                     almoco_in = day.get('entrada_almoco', '-')
                     almoco_out = day.get('saida_almoco', '-')
                     
-                    if almoco_in and almoco_in != '-' and almoco_out and almoco_out != '-':
+                    if almoco_in != '-' and almoco_out != '-':
                         try:
                             almoco_in_dt = datetime.strptime(almoco_in, '%H:%M')
                             almoco_out_dt = datetime.strptime(almoco_out, '%H:%M')
@@ -180,25 +174,20 @@ def calculate_stats(user, attendance_data, total_justificativas, total_pontos_re
                     if work_duration.total_seconds() > 0:
                         hours_worked = work_duration.total_seconds() / 3600
                         total_hours += hours_worked
-                        print(f"Dia {day['date']}: {hours_worked:.2f} horas")
+                        logger.info(f"Dia {day['date']}: {hours_worked:.2f} horas")
                     else:
-                        print(f"Dia {day['date']}: Duração inválida, ignorando")
-                        
+                        logger.info(f"Dia {day['date']}: Duração inválida, ignorando")
             except (ValueError, TypeError) as e:
-                print(f"Erro ao calcular horas para o dia {day.get('date', '?')}: {e}")
+                logger.error(f"Erro ao calcular horas para o dia {day.get('date', '?')}: {e}")
                 continue
-    
-    total_faltas = max(0, total_faltas) 
-    
-    print(f"Resumo: {total_hours:.1f}h trabalhadas, {total_faltas} faltas, {total_atrasos} atrasos")
 
     return {
-        'dias_trabalhados': dias_com_presenca, 
-        'total_pontos_registrados': total_pontos_registrados, 
+        'dias_trabalhados': dias_com_presenca,
+        'total_pontos_registrados': total_pontos_registrados,
         'total_justificativas': total_justificativas,
-        'horas_trabalhadas_total': round(total_hours, 1), 
+        'horas_trabalhadas_total': round(total_hours, 1),
         'total_faltas': total_faltas,
-        'total_atrasos': total_atrasos,
+        'total_atrasos': 0,  # Mantido para compatibilidade
     }
 
 def process_face_image_and_get_embedding(face_image):
