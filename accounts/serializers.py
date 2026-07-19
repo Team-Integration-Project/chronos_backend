@@ -42,7 +42,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         return user
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    cpf = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
 class ForgotPasswordSerializer(serializers.Serializer):

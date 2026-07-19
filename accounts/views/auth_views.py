@@ -49,20 +49,20 @@ class LoginView(APIView):
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         if serializer.is_valid():
-            email = serializer.validated_data['email']
+            cpf = serializer.validated_data['cpf']
             password = serializer.validated_data['password']
 
             User = get_user_model()
             user = None
             try:
-                user = User.objects.get(email=email)
+                user = User.objects.get(cpf=cpf)
                 if not user.check_password(password):
                     user = None
             except User.DoesNotExist:
                 pass
 
             if not user:
-                logger.error(f"Autenticação falhou. Email: {email}, Password: {password}")
+                logger.error(f"Autenticação falhou. CPF: {cpf}, Password: {password}")
                 return Response({'error': 'Credenciais inválidas'}, status=status.HTTP_401_UNAUTHORIZED)
             
             refresh = RefreshToken.for_user(user)
